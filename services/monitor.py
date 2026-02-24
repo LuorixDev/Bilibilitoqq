@@ -48,6 +48,8 @@ class BiliMonitor:
         self._last_dynamic_video_url = {}
         self._last_dynamic_cover = {}
         self._last_dynamic_is_video = {}
+        self._user_face = {}
+        self._next_poll_time = {}
         self._last_live_status = {}
         self._live_started_at = {}
         self._live_last_hourly = {}
@@ -82,8 +84,6 @@ class BiliMonitor:
         self._live_title.pop(uid, None)
         self._live_url.pop(uid, None)
         self._next_poll_time.pop(uid, None)
-        self._user_face = {}
-        self._next_poll_time = {}
 
     def start(self):
         if self._thread and self._thread.is_alive():
