@@ -333,7 +333,20 @@ class BiliMonitor:
             "dynamic list uid=%s items=%s", uid, len(items), extra={"uid": uid}
         )
 
-        latest_id = self._get_dynamic_id(items[0])
+        parsed_items = []
+        for item in items:
+            info = self._parse_dynamic(item)
+            if not info:
+                continue
+            if self._is_live_dynamic_info(info):
+                continue
+            parsed_items.append(info)
+
+        if not parsed_items:
+            return
+
+        latest_info = parsed_items[0]
+        latest_id = latest_info.get("id") or ""
         if not latest_id:
             return
         self._logger.debug(
@@ -343,19 +356,19 @@ class BiliMonitor:
         last_id = self._last_dynamic_id.get(uid)
         if not last_id:
             self._last_dynamic_id[uid] = latest_id
-            info = self._parse_dynamic(items[0])
-            if info:
-                self._cache_last_dynamic(uid, info)
+            if not latest_info.get("avatar"):
+                latest_info["avatar"] = self._user_face.get(uid, "")
+            self._cache_last_dynamic(uid, latest_info)
             return
 
         if last_id == latest_id:
             return
 
         new_items = []
-        for item in items:
-            if self._get_dynamic_id(item) == last_id:
+        for info in parsed_items:
+            if info.get("id") == last_id:
                 break
-            new_items.append(item)
+            new_items.append(info)
         if not new_items:
             self._last_dynamic_id[uid] = latest_id
             return
@@ -364,20 +377,15 @@ class BiliMonitor:
             new_items = new_items[:MAX_DYNAMIC_PER_POLL]
 
         new_items.reverse()
-        for item in new_items:
-            info = self._parse_dynamic(item)
-            if not info:
-                continue
+        for info in new_items:
             if not info.get("avatar"):
                 info["avatar"] = self._user_face.get(uid, "")
             self._dispatch_dynamic(user, name, info)
 
         self._last_dynamic_id[uid] = latest_id
-        latest_info = self._parse_dynamic(items[0])
-        if latest_info:
-            if not latest_info.get("avatar"):
-                latest_info["avatar"] = self._user_face.get(uid, "")
-            self._cache_last_dynamic(uid, latest_info)
+        if not latest_info.get("avatar"):
+            latest_info["avatar"] = self._user_face.get(uid, "")
+        self._cache_last_dynamic(uid, latest_info)
 
     def _dispatch_dynamic(self, user: dict, name: str, info: dict):
         if self._is_live_dynamic_info(info):
