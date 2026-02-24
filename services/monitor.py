@@ -1770,6 +1770,11 @@ class BiliMonitor:
             if author_face:
                 author_face = self._normalize_url(str(author_face))
 
+        if not any(
+            [cover, title, desc, duration, play, danmaku, author_name, author_face]
+        ):
+            return ""
+
         parts = ['<div class="media-card">']
         if author_name or author_face:
             parts.append('<div class="media-author">')
@@ -1871,6 +1876,8 @@ class BiliMonitor:
         url = self._stringify(url)
         meta = self._stringify(meta)
         stats = self._stringify(stats)
+        if not any([title, desc, cover, url, meta, stats]):
+            return ""
         parts = ['<div class="media-card">']
         if cover:
             parts.append(
