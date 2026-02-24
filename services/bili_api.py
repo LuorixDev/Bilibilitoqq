@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 from typing import Any
 from urllib.request import Request, urlopen
 
@@ -24,6 +25,8 @@ from config import (
 
 _LOGGER = logging.getLogger("bili_api")
 _INITIALIZED = False
+_RETRY_COUNT = 2
+_RETRY_BASE_DELAY = 0.6
 
 
 def _init_client():
@@ -102,6 +105,37 @@ def _headers() -> dict:
     return headers
 
 
+def _retry_sleep(attempt: int):
+    delay = _RETRY_BASE_DELAY * (2**attempt)
+    time.sleep(delay)
+
+
+def _call_with_retries(action, label: str, uid: str | None = None, extra: str | None = None):
+    for attempt in range(_RETRY_COUNT + 1):
+        try:
+            return action()
+        except Exception as exc:
+            if attempt >= _RETRY_COUNT:
+                _LOGGER.warning(
+                    "%s failed uid=%s extra=%s err=%s",
+                    label,
+                    uid or "",
+                    extra or "",
+                    exc,
+                )
+                return None
+            _LOGGER.warning(
+                "%s retry %s/%s uid=%s extra=%s err=%s",
+                label,
+                attempt + 1,
+                _RETRY_COUNT,
+                uid or "",
+                extra or "",
+                exc,
+            )
+            _retry_sleep(attempt)
+
+
 def _normalize_url(url: str) -> str:
     if not url:
         return ""
@@ -140,40 +174,38 @@ def _headers_with_credential(data: dict | None) -> dict:
 
 
 def _fetch_json(url: str, headers: dict) -> dict | None:
-    try:
+    def _call():
         req = Request(url, headers=headers)
         with urlopen(req, timeout=HTTP_TIMEOUT) as resp:
             raw = resp.read()
         data = json.loads(raw.decode("utf-8", errors="ignore"))
         if isinstance(data, dict):
             return data
-    except Exception as exc:
-        _LOGGER.warning("Bili API json fetch failed %s err=%s", url, exc)
-    return None
+        return None
+
+    return _call_with_retries(_call, "Bili API json fetch", extra=url)
 
 
 def fetch_user_info(uid: str, credential_data: dict | None = None) -> dict | None:
     _init_client()
-    try:
-        _LOGGER.debug("Bili API user info uid=%s", uid, extra={"uid": uid})
+    _LOGGER.debug("Bili API user info uid=%s", uid, extra={"uid": uid})
+
+    def _call():
         user = bili_user.User(int(uid), credential=_build_credential(credential_data))
-        data = sync(user.get_user_info())
-        return data
-    except Exception as exc:
-        _LOGGER.warning("Bili API user info failed uid=%s err=%s", uid, exc)
-        return None
+        return sync(user.get_user_info())
+
+    return _call_with_retries(_call, "Bili API user info", uid=uid)
 
 
 def fetch_live_info(uid: str, credential_data: dict | None = None) -> dict | None:
     _init_client()
-    try:
-        _LOGGER.debug("Bili API live info uid=%s", uid, extra={"uid": uid})
+    _LOGGER.debug("Bili API live info uid=%s", uid, extra={"uid": uid})
+
+    def _call():
         user = bili_user.User(int(uid), credential=_build_credential(credential_data))
-        data = sync(user.get_live_info())
-        return data
-    except Exception as exc:
-        _LOGGER.warning("Bili API live info failed uid=%s err=%s", uid, exc)
-        return None
+        return sync(user.get_live_info())
+
+    return _call_with_retries(_call, "Bili API live info", uid=uid)
 
 
 def fetch_live_room_info(
@@ -222,34 +254,33 @@ def fetch_dynamic_list(
     uid: str, offset: str | None = None, credential_data: dict | None = None
 ) -> list[dict[str, Any]] | None:
     _init_client()
-    try:
-        _LOGGER.debug(
-            "Bili API dynamics uid=%s offset=%s", uid, offset or "-", extra={"uid": uid}
-        )
+    _LOGGER.debug(
+        "Bili API dynamics uid=%s offset=%s", uid, offset or "-", extra={"uid": uid}
+    )
+
+    def _call():
         user = bili_user.User(int(uid), credential=_build_credential(credential_data))
         if offset:
-            data = sync(user.get_dynamics_new(offset=offset))
-        else:
-            data = sync(user.get_dynamics_new())
-        if not isinstance(data, dict):
-            return None
-        items = data.get("items")
-        if items is None:
-            items = (data.get("data") or {}).get("items")
-        if not isinstance(items, list):
-            return None
-        filtered = [item for item in items if not _is_pinned_dynamic(item)]
-        _LOGGER.debug(
-            "Bili API dynamics uid=%s total=%s filtered=%s",
-            uid,
-            len(items),
-            len(filtered),
-            extra={"uid": uid},
-        )
-        return filtered
-    except Exception as exc:
-        _LOGGER.warning("Bili API dynamics failed uid=%s err=%s", uid, exc)
+            return sync(user.get_dynamics_new(offset=offset))
+        return sync(user.get_dynamics_new())
+
+    data = _call_with_retries(_call, "Bili API dynamics", uid=uid, extra=offset or "-")
+    if not isinstance(data, dict):
         return None
+    items = data.get("items")
+    if items is None:
+        items = (data.get("data") or {}).get("items")
+    if not isinstance(items, list):
+        return None
+    filtered = [item for item in items if not _is_pinned_dynamic(item)]
+    _LOGGER.debug(
+        "Bili API dynamics uid=%s total=%s filtered=%s",
+        uid,
+        len(items),
+        len(filtered),
+        extra={"uid": uid},
+    )
+    return filtered
 
 
 def _is_pinned_dynamic(item: dict | None) -> bool:
@@ -281,16 +312,15 @@ def _is_pinned_dynamic(item: dict | None) -> bool:
 
 def fetch_latest_video(uid: str, credential_data: dict | None = None) -> dict | None:
     _init_client()
-    try:
+    def _call():
         user = bili_user.User(int(uid), credential=_build_credential(credential_data))
-        data = sync(user.get_videos(pn=1, ps=1, order="pubdate"))
-        vlist = (((data.get("list") or {}).get("vlist")) or []) if isinstance(data, dict) else []
-        if not vlist:
-            return None
-        return vlist[0]
-    except Exception as exc:
-        _LOGGER.warning("Bili API latest video failed uid=%s err=%s", uid, exc)
+        return sync(user.get_videos(pn=1, ps=1, order="pubdate"))
+
+    data = _call_with_retries(_call, "Bili API latest video", uid=uid)
+    vlist = (((data.get("list") or {}).get("vlist")) or []) if isinstance(data, dict) else []
+    if not vlist:
         return None
+    return vlist[0]
 
 
 def download_image(url: str) -> bytes | None:
@@ -298,10 +328,9 @@ def download_image(url: str) -> bytes | None:
         return None
     if url.startswith("//"):
         url = "https:" + url
-    try:
+    def _call():
         req = Request(url, headers=_headers())
         with urlopen(req, timeout=HTTP_TIMEOUT) as resp:
             return resp.read()
-    except Exception as exc:
-        _LOGGER.warning("Bili image fetch failed %s err=%s", url, exc)
-        return None
+
+    return _call_with_retries(_call, "Bili image fetch", extra=url)

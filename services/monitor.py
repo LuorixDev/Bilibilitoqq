@@ -1,6 +1,7 @@
 import base64
 import html as html_lib
 import logging
+import queue
 import re
 import threading
 import time
@@ -30,6 +31,81 @@ from services.time_utils import format_duration
 _SPECIAL_PATTERN = re.compile(r"(\{SHOTPICTURE\}|\[atALL\])")
 
 
+class _RateLimiter:
+    def __init__(self, min_interval: float):
+        self._min_interval = max(0.0, float(min_interval))
+        self._lock = threading.Lock()
+        self._next_time = 0.0
+
+    def wait(self):
+        if self._min_interval <= 0:
+            return
+        sleep_for = 0.0
+        with self._lock:
+            now = time.monotonic()
+            if now < self._next_time:
+                sleep_for = self._next_time - now
+                self._next_time += self._min_interval
+            else:
+                self._next_time = now + self._min_interval
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+
+
+class _TaskQueue:
+    def __init__(self, name: str, workers: int, min_interval: float, maxsize: int, logger):
+        self._name = name
+        self._queue = queue.Queue(maxsize=maxsize)
+        self._limiter = _RateLimiter(min_interval)
+        self._logger = logger
+        self._workers = []
+        for idx in range(max(1, int(workers))):
+            worker = threading.Thread(target=self._worker, daemon=True, name=f"{name}-worker-{idx}")
+            worker.start()
+            self._workers.append(worker)
+
+    def _worker(self):
+        while True:
+            task = self._queue.get()
+            if task is None:
+                self._queue.task_done()
+                break
+            fn, args, kwargs, event, result_box = task
+            try:
+                self._limiter.wait()
+                result = fn(*args, **kwargs)
+                if result_box is not None:
+                    result_box["result"] = result
+            except Exception as exc:
+                if result_box is not None:
+                    result_box["error"] = exc
+                else:
+                    self._logger.exception("%s task failed", self._name)
+            finally:
+                if event is not None:
+                    event.set()
+                self._queue.task_done()
+
+    def submit(self, fn, *args, wait: bool = False, **kwargs):
+        if wait:
+            event = threading.Event()
+            result_box = {}
+            try:
+                self._queue.put((fn, args, kwargs, event, result_box), timeout=5)
+            except queue.Full:
+                self._logger.warning("%s queue full, executing inline", self._name)
+                return fn(*args, **kwargs)
+            event.wait()
+            if "error" in result_box:
+                raise result_box["error"]
+            return result_box.get("result")
+        try:
+            self._queue.put_nowait((fn, args, kwargs, None, None))
+        except queue.Full:
+            self._logger.warning("%s queue full, drop task", self._name)
+        return None
+
+
 class BiliMonitor:
     def __init__(self, app, onebot, onebot_defaults: dict):
         self.app = app
@@ -38,6 +114,10 @@ class BiliMonitor:
         self._thread = None
         self._stop = threading.Event()
         self._logger = logging.getLogger("bili_monitor")
+        self._bapi_queue = _TaskQueue("bapi", workers=2, min_interval=0.3, maxsize=200, logger=self._logger)
+        self._onebot_queue = _TaskQueue(
+            "onebot", workers=1, min_interval=0.2, maxsize=500, logger=self._logger
+        )
 
         self._last_dynamic_id = {}
         self._last_dynamic_text = {}
@@ -160,38 +240,38 @@ class BiliMonitor:
                 for u in users
             ]
 
-        self._logger.debug("poll start users=%s", len(users))
+            self._logger.debug("poll start users=%s", len(users))
 
-        for user in users:
-            uid = user["uid"]
-            bindings = user.get("bindings") or []
-            if not bindings:
-                continue
-            interval = self._resolve_poll_interval(user)
-            if not force:
-                next_time = self._next_poll_time.get(uid)
-                if next_time and now < next_time:
+            for user in users:
+                uid = user["uid"]
+                bindings = user.get("bindings") or []
+                if not bindings:
                     continue
-            self._next_poll_time[uid] = now + interval
-            self._logger.debug(
-                "poll user uid=%s bindings=%s", uid, len(bindings), extra={"uid": uid}
-            )
+                interval = self._resolve_poll_interval(user)
+                if not force:
+                    next_time = self._next_poll_time.get(uid)
+                    if next_time and now < next_time:
+                        continue
+                self._next_poll_time[uid] = now + interval
+                self._logger.debug(
+                    "poll user uid=%s bindings=%s", uid, len(bindings), extra={"uid": uid}
+                )
 
-            name = user.get("name") or ""
-            if not name:
-                info = fetch_user_info(uid, user.get("credential"))
-                if info:
-                    name = info.get("name") or info.get("uname") or ""
-                    if name:
-                        self._update_user_name(user["id"], name)
+                name = user.get("name") or ""
                 if not name:
-                    name = f"UID {uid}"
+                    info = fetch_user_info(uid, user.get("credential"))
+                    if info:
+                        name = info.get("name") or info.get("uname") or ""
+                        if name:
+                            self._update_user_name(user["id"], name)
+                    if not name:
+                        name = f"UID {uid}"
 
-            self._ensure_user_profile(user, name)
-            self._handle_dynamic(user, name)
-            self._handle_live(user, name)
-            self._update_status_cache(user, name)
-        return self._next_sleep_time(now)
+                self._ensure_user_profile(user, name)
+                self._handle_dynamic(user, name)
+                self._handle_live(user, name)
+                self._update_status_cache(user, name)
+            return self._next_sleep_time(now)
 
     @staticmethod
     def _resolve_poll_interval(user: dict) -> int:
@@ -232,9 +312,20 @@ class BiliMonitor:
         except Exception:
             self._logger.exception("Failed to update user name")
 
+    def _bapi_call(self, fn, *args, **kwargs):
+        try:
+            return self._bapi_queue.submit(fn, *args, wait=True, **kwargs)
+        except Exception:
+            self._logger.exception(
+                "Bili API call failed fn=%s", getattr(fn, "__name__", "unknown")
+            )
+            return None
+
     def _handle_dynamic(self, user: dict, name: str):
         uid = user["uid"]
-        items = fetch_dynamic_list(uid, credential_data=user.get("credential"))
+        items = self._bapi_call(
+            fetch_dynamic_list, uid, credential_data=user.get("credential")
+        )
         if not items:
             return
         self._logger.debug(
@@ -292,39 +383,46 @@ class BiliMonitor:
         is_video = info.get("is_video")
         html_values = self._dynamic_html_values(name, info)
         for binding in bindings:
-            if not self._onebot_enabled(binding):
-                continue
+            try:
+                if not self._onebot_enabled(binding):
+                    continue
 
-            if is_video and binding.get("notify_video"):
-                template = self._get_template(binding, "video")
-                values = self._video_values(name, info)
-                image_bytes = self._maybe_render_dynamic_image(
-                    binding, template, html_values, info, user.get("credential")
-                )
-                self._send_template(binding, template, values, image_bytes)
-                continue
+                if is_video and binding.get("notify_video"):
+                    template = self._get_template(binding, "video")
+                    values = self._video_values(name, info)
+                    image_bytes = self._maybe_render_dynamic_image(
+                        binding, template, html_values, info, user.get("credential")
+                    )
+                    self._send_template(binding, template, values, image_bytes)
+                    continue
 
-            if not is_video and binding.get("notify_dynamic"):
-                template = self._get_template(binding, "dynamic")
-                values = self._dynamic_values(name, info)
-                image_bytes = self._maybe_render_dynamic_image(
-                    binding, template, html_values, info, user.get("credential")
-                )
-                self._send_template(binding, template, values, image_bytes)
-                continue
+                if not is_video and binding.get("notify_dynamic"):
+                    template = self._get_template(binding, "dynamic")
+                    values = self._dynamic_values(name, info)
+                    image_bytes = self._maybe_render_dynamic_image(
+                        binding, template, html_values, info, user.get("credential")
+                    )
+                    self._send_template(binding, template, values, image_bytes)
+                    continue
 
-            if is_video and binding.get("notify_dynamic") and not binding.get("notify_video"):
-                template = self._get_template(binding, "dynamic")
-                values = self._dynamic_values(name, info)
-                image_bytes = self._maybe_render_dynamic_image(
-                    binding, template, html_values, info, user.get("credential")
+                if is_video and binding.get("notify_dynamic") and not binding.get("notify_video"):
+                    template = self._get_template(binding, "dynamic")
+                    values = self._dynamic_values(name, info)
+                    image_bytes = self._maybe_render_dynamic_image(
+                        binding, template, html_values, info, user.get("credential")
+                    )
+                    self._send_template(binding, template, values, image_bytes)
+            except Exception:
+                self._logger.exception(
+                    "dynamic dispatch failed uid=%s binding=%s",
+                    user.get("uid"),
+                    binding.get("id"),
                 )
-                self._send_template(binding, template, values, image_bytes)
 
     def _handle_live(self, user: dict, name: str):
         uid = user["uid"]
         bindings = user.get("bindings") or []
-        info = fetch_live_info(uid, user.get("credential"))
+        info = self._bapi_call(fetch_live_info, uid, user.get("credential"))
         if not info:
             return
 
@@ -519,25 +617,32 @@ class BiliMonitor:
             avatar,
         )
         for binding in user.get("bindings") or []:
-            if not self._onebot_enabled(binding):
-                continue
-            if event_key == "live_start" and not self._notify_live_start(binding):
-                continue
-            if event_key == "live_hourly" and not self._notify_live_hourly(binding):
-                continue
-            if event_key == "live_end" and not self._notify_live_end(binding):
-                continue
-            template = self._get_template(binding, event_key)
-            values = self._live_values(name, title, online, live_url, duration, max_online)
-            image_bytes = self._maybe_render_live_image(
-                binding, template, html_values, cover_url
-            )
-            self._send_template(binding, template, values, image_bytes)
+            try:
+                if not self._onebot_enabled(binding):
+                    continue
+                if event_key == "live_start" and not self._notify_live_start(binding):
+                    continue
+                if event_key == "live_hourly" and not self._notify_live_hourly(binding):
+                    continue
+                if event_key == "live_end" and not self._notify_live_end(binding):
+                    continue
+                template = self._get_template(binding, event_key)
+                values = self._live_values(name, title, online, live_url, duration, max_online)
+                image_bytes = self._maybe_render_live_image(
+                    binding, template, html_values, cover_url
+                )
+                self._send_template(binding, template, values, image_bytes)
+            except Exception:
+                self._logger.exception(
+                    "live dispatch failed uid=%s binding=%s",
+                    user.get("uid"),
+                    binding.get("id"),
+                )
 
     def _get_dynamic_image(self, info: dict, credential: dict | None) -> bytes | None:
         cover_url = info.get("cover_url") or ""
         if cover_url:
-            image = download_image(cover_url)
+            image = self._bapi_call(download_image, cover_url)
             if image:
                 return image
         url = info.get("url")
@@ -581,7 +686,7 @@ class BiliMonitor:
             return image
         if not cover_url:
             return None
-        return download_image(cover_url)
+        return self._bapi_call(download_image, cover_url)
 
     def _send_template(self, binding: dict, template: str, values: dict, image_bytes: bytes | None):
         if not self._onebot_enabled(binding):
@@ -594,11 +699,11 @@ class BiliMonitor:
             return
         settings = self._settings_for_binding(binding)
         if rich:
-            self.onebot.send_segments(settings, segments)
+            self._onebot_queue.submit(self.onebot.send_segments, settings, segments)
             return
         text = "".join(seg["data"]["text"] for seg in segments if seg.get("type") == "text")
         if text:
-            self.onebot.send_text(settings, text)
+            self._onebot_queue.submit(self.onebot.send_text, settings, text)
 
     def _build_segments(self, template: str, values: dict, image_bytes: bytes | None):
         parts = _SPECIAL_PATTERN.split(template)
@@ -1126,7 +1231,7 @@ class BiliMonitor:
             return
         if uid in self._user_face:
             return
-        info = fetch_user_info(uid, user.get("credential"))
+        info = self._bapi_call(fetch_user_info, uid, user.get("credential"))
         if not info:
             return
         face = info.get("face") or info.get("avatar") or ""
