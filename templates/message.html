@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}发送测试消息{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>发送测试消息</h2>
+      <a href="{{ url_for('admin') }}" class="btn ghost">返回管理</a>
+    </div>
+    <form method="post" class="form">
+      <div class="form-grid">
+        <label>
+          发送通道
+          <select name="binding_id" required>
+            <option value="">请选择绑定</option>
+            {% for b in bindings %}
+              <option value="{{ b.id }}" {% if selected_id and selected_id|int == b.id %}selected{% endif %}>
+                {{ b.user.name }} - {{ b.name }} ({{ b.onebot_target_type }}:{{ b.onebot_target_id or '未配置' }})
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          消息内容
+          <input name="message" type="text" value="{{ message or '' }}" placeholder="你好，这是一条测试消息" required />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="btn primary">发送</button>
+      </div>
+    </form>
+  </section>
+
+  {% if error %}
+    <section class="panel result error">
+      <h3>发送失败</h3>
+      <p>{{ error }}</p>
+      {% if result and result.response %}
+        <pre class="code-block">{{ result.response | tojson(indent=2) }}</pre>
+      {% endif %}
+    </section>
+  {% elif result %}
+    <section class="panel result success">
+      <h3>发送成功</h3>
+      <pre class="code-block">{{ result.response | tojson(indent=2) }}</pre>
+    </section>
+  {% endif %}
+{% endblock %}

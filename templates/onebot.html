@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}OneBot 配置{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>OneBot 配置</h2>
+      <div class="panel-actions">
+        <a href="{{ url_for('admin') }}" class="btn ghost">返回管理</a>
+      </div>
+    </div>
+    <form method="post" class="form">
+      <div class="form-grid">
+        <label>
+          名称
+          <input name="name" type="text" placeholder="默认" />
+        </label>
+        <label>
+          WS 地址
+          <input name="ws_url" type="text" placeholder="ws://127.0.0.1:6700" required />
+        </label>
+        <label>
+          Access Token
+          <input name="access_token" type="text" placeholder="可选" />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="btn primary">新增配置</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>已有配置</h2>
+    </div>
+    {% if profiles %}
+      <div class="table table-onebot">
+        <div class="table-row table-header">
+          <div>名称</div>
+          <div>WS 地址</div>
+          <div>Token</div>
+          <div>操作</div>
+        </div>
+        {% for p in profiles %}
+          <div class="table-row">
+            <div>{{ p.name }}</div>
+            <div>{{ p.ws_url }}</div>
+            <div>{{ p.access_token or '-' }}</div>
+            <div class="actions">
+              <a href="{{ url_for('admin_onebot_edit', profile_id=p.id) }}" class="btn ghost">编辑</a>
+              <form method="post" action="{{ url_for('admin_onebot_delete', profile_id=p.id) }}" onsubmit="return confirm('确定删除？');">
+                <button type="submit" class="btn danger">删除</button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p>暂无配置。</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% block title %}编辑 UP 主{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>编辑 UP 主</h2>
+      <div class="panel-actions">
+        <a href="{{ url_for('admin') }}" class="btn ghost">返回管理</a>
+      </div>
+    </div>
+    <form method="post" class="form">
+      <div class="form-grid">
+        <label>
+          UID
+          <input name="uid" type="text" value="{{ user.uid }}" required />
+        </label>
+        <label>
+          昵称
+          <input name="name" type="text" value="{{ user.name }}" />
+        </label>
+        <label>
+          登录名
+          <input name="login_username" type="text" value="{{ user.login_username or user.uid }}" />
+        </label>
+        <label>
+          重置密码（可选）
+          <input name="password" type="text" placeholder="留空不修改" />
+        </label>
+        <label class="check">
+          <input type="checkbox" name="enabled" {% if user.enabled %}checked{% endif %} />
+          启用监控
+        </label>
+        <label>
+          检测间隔（秒）
+          <input name="poll_interval" type="number" min="0" value="{{ user.poll_interval or 0 }}" />
+        </label>
+        <div class="hint">0 表示使用全局默认（{{ poll_interval_default }} 秒）</div>
+      </div>
+      <div class="divider"></div>
+      <div class="form-section">
+        <div class="section-title">B 站凭据</div>
+        <div class="hint-card">
+          <div class="hint-title">B 站凭据</div>
+          <div class="hint-list">
+            <div>Cookie（可选，留空不修改）</div>
+            <div class="code-block">SESSDATA=...; bili_jct=...; buvid3=...;</div>
+            <div>SESSDATA / bili_jct / buvid3 / buvid4 / DedeUserID / ac_time_value（可选）</div>
+            <div>填写 Cookie 会自动解析常见字段，未填写的字段将保留原值。</div>
+          </div>
+        </div>
+        <label>
+          Cookie（可选，留空不修改）
+          <textarea name="cookie" rows="3" placeholder="SESSDATA=...; bili_jct=...; buvid3=...;">{{ cookie_value or "" }}</textarea>
+        </label>
+        <div class="grid-2">
+          <label>
+            SESSDATA
+            <input name="sessdata" type="text" value="{{ user.sessdata or '' }}" />
+          </label>
+          <label>
+            bili_jct
+            <input name="bili_jct" type="text" value="{{ user.bili_jct or '' }}" />
+          </label>
+          <label>
+            buvid3
+            <input name="buvid3" type="text" value="{{ user.buvid3 or '' }}" />
+          </label>
+          <label>
+            buvid4
+            <input name="buvid4" type="text" value="{{ user.buvid4 or '' }}" />
+          </label>
+          <label>
+            DedeUserID
+            <input name="dedeuserid" type="text" value="{{ user.dedeuserid or '' }}" />
+          </label>
+          <label>
+            ac_time_value
+            <input name="ac_time_value" type="text" value="{{ user.ac_time_value or '' }}" placeholder="可为空" />
+          </label>
+        </div>
+        <p class="hint">填写 Cookie 会自动解析常见字段，未填写的字段将保留原值。</p>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" name="action" value="save" class="btn primary">保存</button>
+        <button type="submit" name="action" value="test_credential" class="btn ghost">测试凭据</button>
+        <button type="submit" name="action" value="clear_credential" class="btn danger">一键清空 Cookie</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    (function () {
+      const cookieField = document.querySelector('textarea[name="cookie"]');
+      if (!cookieField) return;
+      const mapping = {
+        SESSDATA: ['input[name="sessdata"]'],
+        bili_jct: ['input[name="bili_jct"]'],
+        buvid3: ['input[name="buvid3"]'],
+        buvid4: ['input[name="buvid4"]'],
+        DedeUserID: ['input[name="dedeuserid"]'],
+        ac_time_value: ['input[name="ac_time_value"]', "ac_time"],
+      };
+
+      function parseCookie(text) {
+        const result = {};
+        text.split(";").forEach((part) => {
+          const trimmed = part.trim();
+          if (!trimmed) return;
+          const eq = trimmed.indexOf("=");
+          if (eq === -1) return;
+          const key = trimmed.slice(0, eq);
+          const value = trimmed.slice(eq + 1);
+          if (!key) return;
+          result[key] = decodeURIComponent(value);
+        });
+        return result;
+      }
+
+      function applyCookie() {
+        const text = cookieField.value.trim();
+        if (!text) return;
+        const parsed = parseCookie(text);
+        Object.keys(mapping).forEach((key) => {
+          const targets = mapping[key];
+          const input = document.querySelector(targets[0]);
+          if (!input) return;
+          const value = parsed[key] || parsed[targets[1] || ""];
+          if (value) {
+            input.value = value;
+          }
+        });
+      }
+
+      cookieField.addEventListener("input", applyCookie);
+      cookieField.addEventListener("blur", applyCookie);
+    })();
+  </script>
+{% endblock %}

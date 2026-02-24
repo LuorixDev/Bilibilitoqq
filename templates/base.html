@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Bilibili 推送控制台{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">Bilibili Notify Console</div>
+      <nav class="nav">
+        <a href="{{ url_for('index') }}">列表</a>
+        {% if current_user.is_authenticated %}
+          {% if current_user.is_admin %}
+            <a href="{{ url_for('admin') }}">管理</a>
+            <a href="{{ url_for('admin_onebot') }}">OneBot</a>
+            <a href="{{ url_for('admin_message') }}">消息</a>
+            <a href="{{ url_for('logs') }}">日志</a>
+          {% else %}
+            <a href="{{ url_for('user_bindings') }}">我的绑定</a>
+            <a href="{{ url_for('user_credential') }}">我的凭据</a>
+            <a href="{{ url_for('user_password') }}">修改密码</a>
+            <a href="{{ url_for('logs') }}">日志</a>
+          {% endif %}
+          <a href="{{ url_for('logout') }}">退出</a>
+        {% else %}
+          <a href="{{ url_for('login') }}">登录</a>
+        {% endif %}
+      </nav>
+    </header>
+
+    <main class="container">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-list">
+            {% for category, message in messages %}
+              <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

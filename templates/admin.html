@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block title %}UP 主管理{% endblock %}
+
+{% block content %}
+  <section class="panel">
+      <div class="panel-header">
+        <h2>已添加 UP 主</h2>
+        <div class="panel-actions">
+          <form method="post" action="{{ url_for('admin_settings') }}" class="form inline">
+            <label class="inline">
+              <span>全局检测间隔（秒）</span>
+              <input name="global_poll_interval" type="number" min="1" value="{{ global_poll_interval }}" />
+            </label>
+            <button type="submit" class="btn ghost">保存</button>
+          </form>
+          <form method="post" action="{{ url_for('refresh_now') }}">
+            <button type="submit" class="btn ghost">刷新检查</button>
+          </form>
+          <a href="{{ url_for('admin_message') }}" class="btn ghost">测试消息</a>
+          <button type="button" class="btn primary" data-open-modal="add-user-modal">添加 UP 主</button>
+        </div>
+      </div>
+    {% if users %}
+      <div class="table table-users">
+        <div class="table-row table-header">
+          <div>名称</div>
+          <div>UID</div>
+          <div>绑定</div>
+          <div>操作</div>
+        </div>
+        {% for u in users %}
+          <div class="table-row">
+            <div>{{ u.name }}</div>
+            <div>
+              <div>{{ u.uid }}</div>
+              <div class="subtext">登录名：{{ u.login_username or u.uid }}</div>
+              <div class="subtext">刷新倒计时：<span class="countdown" data-user-id="{{ u.id }}">-</span></div>
+            </div>
+            <div>
+              <div class="binding-list">
+                {% if u.bindings %}
+                  {% for b in u.bindings %}
+                    <div class="binding-item">
+                      <div>{{ b.name }} | {{ b.onebot_target_type or 'group' }}: {{ b.onebot_target_id or '未配置' }}</div>
+                      <div class="subtext">
+                        {% if b.onebot_profile %}
+                          {{ b.onebot_profile.name }}
+                        {% else %}
+                          {{ b.onebot_ws_url or '未配置 WS' }}
+                        {% endif %}
+                      </div>
+                    </div>
+                  {% endfor %}
+                {% else %}
+                  <div class="subtext">暂无绑定</div>
+                {% endif %}
+              </div>
+            </div>
+            <div class="actions">
+              <a href="{{ url_for('admin_bindings', user_id=u.id) }}" class="btn ghost">绑定管理</a>
+              <a href="{{ url_for('admin_edit', user_id=u.id) }}" class="btn ghost">编辑</a>
+              <form method="post" action="{{ url_for('admin_delete', user_id=u.id) }}" onsubmit="return confirm('确定删除？');">
+                <button type="submit" class="btn danger">删除</button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p>暂无 UP 主。</p>
+    {% endif %}
+  </section>
+
+  <div class="modal" id="add-user-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="add-user-modal"></div>
+    <div class="modal-content" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>添加 UP 主</h3>
+        <button type="button" class="btn ghost" data-close-modal="add-user-modal">关闭</button>
+      </div>
+      <form method="post" action="{{ url_for('admin_add') }}" class="form">
+        <div class="form-grid">
+          <label>
+            UID
+            <input name="uid" type="text" required />
+          </label>
+          <label>
+            昵称（可选）
+            <input name="name" type="text" placeholder="留空自动拉取" />
+          </label>
+          <label>
+            登录名（可选）
+            <input name="login_username" type="text" placeholder="留空默认 UID" />
+          </label>
+          <label>
+            初始密码（可选）
+            <input name="password" type="text" placeholder="留空则无法登录" />
+          </label>
+          <label>
+            检测间隔（秒）
+            <input name="poll_interval" type="number" min="0" placeholder="0 使用全局默认" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn primary">确认添加</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    document.querySelectorAll("[data-open-modal]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-open-modal");
+        const modal = document.getElementById(id);
+        if (modal) {
+          modal.setAttribute("aria-hidden", "false");
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-close-modal]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-close-modal");
+        const modal = document.getElementById(id);
+        if (modal) {
+          modal.setAttribute("aria-hidden", "true");
+        }
+      });
+    });
+
+    const countdownEls = Array.from(document.querySelectorAll(".countdown[data-user-id]"));
+    const countdownMap = new Map();
+
+    function formatCountdown(nextPollAtMs) {
+      if (!nextPollAtMs) return "-";
+      const diff = Math.round((nextPollAtMs - Date.now()) / 1000);
+      if (diff <= 0) return "即将刷新";
+      return `${diff} 秒`;
+    }
+
+    function updateCountdowns() {
+      countdownEls.forEach((el) => {
+        const id = el.getAttribute("data-user-id");
+        const nextAt = countdownMap.get(id);
+        el.textContent = formatCountdown(nextAt);
+      });
+    }
+
+    async function loadCountdowns() {
+      try {
+        const res = await fetch("/api/users", { cache: "no-store" });
+        const data = await res.json();
+        data.forEach((user) => {
+          let nextAt = null;
+          if (user.next_poll_at) {
+            const dt = new Date(user.next_poll_at);
+            if (!Number.isNaN(dt.getTime())) nextAt = dt.getTime();
+          } else if (user.checked_at && user.poll_interval) {
+            const checked = new Date(user.checked_at);
+            if (!Number.isNaN(checked.getTime())) {
+              nextAt = checked.getTime() + Number(user.poll_interval) * 1000;
+            }
+          }
+          countdownMap.set(String(user.id), nextAt);
+        });
+        updateCountdowns();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    loadCountdowns();
+    setInterval(loadCountdowns, 5000);
+    setInterval(updateCountdowns, 1000);
+  </script>
+{% endblock %}

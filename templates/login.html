@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}登录{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>登录</h2>
+    </div>
+    <form method="post" class="form row">
+      <label>
+        账号
+        <input name="username" type="text" placeholder="管理员账号或UP主登录名" required />
+      </label>
+      <label>
+        密码
+        <input name="password" type="password" required />
+      </label>
+      <div>
+        <button type="submit" class="btn primary">登录</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}

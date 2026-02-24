@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}UP 主列表{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <div>
+      <h1>UP 主状态</h1>
+      <p>查看动态、直播状态与最新更新。</p>
+    </div>
+    <div class="legend">
+      <span class="dot online"></span> 直播中
+      <span class="dot offline"></span> 未开播
+    </div>
+  </section>
+
+  <section id="user-list" class="card-grid"></section>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

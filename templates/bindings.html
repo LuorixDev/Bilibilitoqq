@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}绑定管理{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>{{ user.name }} 的绑定</h2>
+      <div class="panel-actions">
+        <a href="{{ back_url }}" class="btn ghost">返回</a>
+        <form method="post" action="{{ url_for('refresh_now') }}">
+          <button type="submit" class="btn ghost">刷新检查</button>
+        </form>
+        <a href="{{ new_url }}" class="btn primary">新增绑定</a>
+      </div>
+    </div>
+    <p class="subtext">可在绑定中配置 OneBot 目标、推送策略与消息模板。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>已有绑定</h2>
+    </div>
+    {% if bindings %}
+      <div class="table table-bindings">
+        <div class="table-row table-header">
+          <div>名称</div>
+          <div>OneBot 目标</div>
+          <div>功能</div>
+          <div>状态</div>
+          <div>操作</div>
+        </div>
+        {% for b in bindings %}
+          <div class="table-row">
+            <div>{{ b.name }}</div>
+            <div>
+              <div>{{ b.onebot_target_type or 'group' }}: {{ b.onebot_target_id or '未配置' }}</div>
+              <div class="subtext">
+                {% if b.onebot_profile %}
+                  {{ b.onebot_profile.name }}
+                {% else %}
+                  {{ b.onebot_ws_url or '未配置 WS' }}
+                {% endif %}
+              </div>
+            </div>
+            <div>
+              <div class="subtext">
+                {% if b.notify_dynamic %}动态 {% endif %}
+                {% if b.notify_video %}视频 {% endif %}
+                {% if b.notify_live_start %}开播 {% endif %}
+                {% if b.notify_live_hourly %}小时播报 {% endif %}
+                {% if b.notify_live_end %}结束总结 {% endif %}
+                {% if b.enable_screenshot %}截图 {% endif %}
+              </div>
+            </div>
+            <div>
+              {% if b.enable_onebot %}
+                <span class="subtext">已启用</span>
+              {% else %}
+                <span class="subtext">已关闭</span>
+              {% endif %}
+            </div>
+            <div class="actions">
+              {% if is_admin %}
+                <a href="{{ url_for('admin_binding_edit', binding_id=b.id) }}" class="btn ghost">编辑</a>
+                <form method="post" action="{{ url_for('admin_binding_delete', binding_id=b.id) }}" onsubmit="return confirm('确定删除？');">
+                  <button type="submit" class="btn danger">删除</button>
+                </form>
+              {% else %}
+                <a href="{{ url_for('user_binding_edit', binding_id=b.id) }}" class="btn ghost">编辑</a>
+                <form method="post" action="{{ url_for('user_binding_delete', binding_id=b.id) }}" onsubmit="return confirm('确定删除？');">
+                  <button type="submit" class="btn danger">删除</button>
+                </form>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p>暂无绑定。</p>
+    {% endif %}
+  </section>
+{% endblock %}

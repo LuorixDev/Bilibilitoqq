@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}编辑 OneBot{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>编辑 OneBot 配置</h2>
+      <div class="panel-actions">
+        <a href="{{ url_for('admin_onebot') }}" class="btn ghost">返回列表</a>
+      </div>
+    </div>
+    <form method="post" class="form">
+      <div class="form-grid">
+        <label>
+          名称
+          <input name="name" type="text" value="{{ profile.name }}" />
+        </label>
+        <label>
+          WS 地址
+          <input name="ws_url" type="text" value="{{ profile.ws_url }}" required />
+        </label>
+        <label>
+          Access Token
+          <input name="access_token" type="text" value="{{ profile.access_token }}" />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}

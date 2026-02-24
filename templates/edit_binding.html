@@ -1,0 +1,418 @@
+{% extends "base.html" %}
+
+{% block title %}编辑绑定{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>编辑绑定</h2>
+      <div class="panel-actions">
+        <a href="{{ back_url }}" class="btn ghost">返回绑定管理</a>
+      </div>
+    </div>
+    <form method="post" class="form">
+      <div class="form-section">
+        <div class="section-title">基础设置</div>
+        <div class="grid-2">
+          <label>
+            名称
+            <input name="name" type="text" value="{{ binding.name }}" />
+          </label>
+          <label>
+            OneBot 配置
+            <select name="onebot_profile_id">
+              <option value="" {% if not binding.onebot_profile_id %}selected{% endif %}>自定义</option>
+              {% for p in profiles %}
+                <option value="{{ p.id }}" {% if binding.onebot_profile_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>
+            OneBot WS
+            <input name="onebot_ws_url" type="text" value="{{ binding.onebot_ws_url }}" placeholder="ws://127.0.0.1:6700" />
+          </label>
+          <label>
+            OneBot Token
+            <input name="onebot_access_token" type="text" value="{{ binding.onebot_access_token }}" placeholder="可选" />
+          </label>
+          <label>
+            目标类型
+            <select name="onebot_target_type">
+              <option value="group" {% if binding.onebot_target_type == "group" %}selected{% endif %}>群聊</option>
+              <option value="private" {% if binding.onebot_target_type == "private" %}selected{% endif %}>私聊</option>
+            </select>
+          </label>
+          <label>
+            目标ID
+            <input name="onebot_target_id" type="text" value="{{ binding.onebot_target_id }}" placeholder="群号或QQ号" />
+          </label>
+        </div>
+        <p class="hint">选择 OneBot 配置后会优先使用配置中的 WS/Token，下方字段可留空。</p>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="form-section">
+        <div class="section-title">通知开关</div>
+        <div class="toggle-grid">
+          <label class="check">
+            <input type="checkbox" name="enable_onebot" {% if binding.enable_onebot or binding.enable_onebot is none %}checked{% endif %} />
+            启用 OneBot 通知
+          </label>
+          <label class="check">
+            <input type="checkbox" name="notify_dynamic" {% if binding.notify_dynamic or binding.notify_dynamic is none %}checked{% endif %} />
+            推送动态
+          </label>
+          <label class="check">
+            <input type="checkbox" name="notify_video" {% if binding.notify_video or binding.notify_video is none %}checked{% endif %} />
+            推送视频更新
+          </label>
+          <label class="check">
+            <input type="checkbox" name="notify_live_start" {% if binding.notify_live_start or binding.notify_live_start is none %}checked{% endif %} />
+            推送开播提醒
+          </label>
+          <label class="check">
+            <input type="checkbox" name="notify_live_hourly" {% if binding.notify_live_hourly or binding.notify_live_hourly is none %}checked{% endif %} />
+            每小时直播播报
+          </label>
+          <label class="check">
+            <input type="checkbox" name="notify_live_end" {% if binding.notify_live_end or binding.notify_live_end is none %}checked{% endif %} />
+            推送直播结束总结
+          </label>
+          <label class="check">
+            <input type="checkbox" name="enable_screenshot" {% if binding.enable_screenshot %}checked{% endif %} />
+            启用截图推送（需要模板包含 {SHOTPICTURE}）
+          </label>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="form-section">
+        <div class="section-title">模板配置</div>
+        <div class="template-layout">
+          <div class="template-main">
+            <div class="template-grid">
+              <div class="template-block">
+                <div class="template-head">动态模板</div>
+                <textarea name="template_dynamic" rows="4" data-template="dynamic">{{ binding.template_dynamic or defaults.dynamic }}</textarea>
+              </div>
+              <div class="template-block">
+                <div class="template-head">视频模板</div>
+                <textarea name="template_video" rows="4" data-template="video">{{ binding.template_video or defaults.video }}</textarea>
+              </div>
+              <div class="template-block">
+                <div class="template-head">直播开播模板</div>
+                <textarea name="template_live_start" rows="4" data-template="live_start">{{ binding.template_live_start or defaults.live_start }}</textarea>
+              </div>
+              <div class="template-block">
+                <div class="template-head">直播播报模板</div>
+                <textarea name="template_live_hourly" rows="4" data-template="live_hourly">{{ binding.template_live_hourly or defaults.live_hourly }}</textarea>
+              </div>
+              <div class="template-block">
+                <div class="template-head">直播结束模板</div>
+                <textarea name="template_live_end" rows="4" data-template="live_end">{{ binding.template_live_end or defaults.live_end }}</textarea>
+              </div>
+            </div>
+            <div class="hint-card">
+              <div class="hint-title">可用变量说明</div>
+              <div class="hint-list">
+                <div><span class="hint-key">{name}</span> UP 主昵称</div>
+                <div><span class="hint-key">{text}</span> 动态正文</div>
+                <div><span class="hint-key">{title}</span> 视频/直播标题</div>
+                <div><span class="hint-key">{url}</span> 动态/视频/直播链接</div>
+                <div><span class="hint-key">{online}</span> 直播人气</div>
+                <div><span class="hint-key">{duration}</span> 直播时长</div>
+                <div><span class="hint-key">{max_online}</span> 直播峰值人气</div>
+                <div><span class="hint-key">{SHOTPICTURE}</span> 插入截图（需启用截图推送）</div>
+                <div><span class="hint-key">[atALL]</span> @全体成员（群聊有效）</div>
+              </div>
+            </div>
+          </div>
+          <div class="template-preview">
+            <div class="preview-title">消息预览</div>
+            <div class="preview-wrap">
+              <div class="qq-card">
+                <div class="qq-header">
+                  <div class="qq-avatar"></div>
+                  <div class="qq-meta">
+                    <div class="qq-name">BiliBot</div>
+                    <div class="qq-sub">模拟消息</div>
+                  </div>
+                </div>
+                <div class="qq-bubble" id="preview-bubble">
+                  <div class="qq-text">请选择或编辑模板以预览效果。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="form-section">
+        <div class="section-title">截图 HTML 模板</div>
+        <div class="template-layout">
+          <div class="template-main">
+            <div class="template-grid">
+              <div class="template-block">
+                <div class="template-head">动态截图模板</div>
+                <textarea name="screenshot_template_dynamic" rows="8" data-html-template="dynamic">{{ binding.screenshot_template_dynamic or html_defaults.dynamic }}</textarea>
+              </div>
+              <div class="template-block">
+                <div class="template-head">直播截图模板</div>
+                <textarea name="screenshot_template_live" rows="8" data-html-template="live">{{ binding.screenshot_template_live or html_defaults.live }}</textarea>
+              </div>
+            </div>
+            <div class="hint-card">
+              <div class="hint-title">HTML 可用变量</div>
+              <div class="hint-list">
+                {% for item in html_vars %}
+                  <div><span class="hint-key">{{ item }}</span></div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          <div class="template-preview">
+            <div class="preview-title">HTML 预览</div>
+            <div class="preview-wrap">
+              <select id="html-preview-type" class="select-inline">
+                <option value="dynamic">动态</option>
+                <option value="live">直播</option>
+              </select>
+              <iframe id="html-preview-frame" class="html-frame" title="html preview"></iframe>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>测试发送</h2>
+    </div>
+    <form method="post" action="{{ url_for('binding_test', binding_id=binding.id) }}" class="form">
+      <div class="grid-2">
+        <label>
+          测试类型
+          <select name="test_type" id="test-type">
+            <option value="dynamic">动态</option>
+            <option value="video">视频</option>
+            <option value="live_start">直播开播</option>
+            <option value="live_hourly">直播播报</option>
+            <option value="live_end">直播结束</option>
+          </select>
+        </label>
+        <label>
+          选择动态
+          <select name="dynamic_id" id="dynamic-id" {% if not dynamics %}disabled{% endif %}>
+            {% if dynamics %}
+              {% for item in dynamics %}
+                <option value="{{ item.id }}">{{ item.label }}</option>
+              {% endfor %}
+            {% else %}
+              <option value="">暂无可用动态</option>
+            {% endif %}
+          </select>
+        </label>
+      </div>
+      <div class="hint-card" id="dynamic-hint">
+        <div class="hint-title">动态测试说明</div>
+        <div class="hint-list">
+          <div>发送所选动态的真实内容（已忽略置顶）。</div>
+          <div>若模板包含 {SHOTPICTURE}，会生成动态截图。</div>
+        </div>
+      </div>
+      <div class="hint-card" id="live-hint">
+        <div class="hint-title">直播测试说明</div>
+        <div class="hint-list">
+          <div>模拟开播，使用当前或上次开播数据。</div>
+          <div>直播中途截图会优先使用当前直播画面。</div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn ghost">测试发送</button>
+      </div>
+    </form>
+    <p class="hint">动态/视频测试会从爬虫结果中选择内容发送。</p>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    (function () {
+      const samples = {
+        dynamic: {
+          name: "某位UP主",
+          text: "今天更新了新的动态内容",
+          url: "https://t.bilibili.com/123456",
+        },
+        video: {
+          name: "某位UP主",
+          title: "新视频标题",
+          url: "https://www.bilibili.com/video/BV1xx411c7mD",
+          text: "视频更新了",
+        },
+        live_start: {
+          name: "某位UP主",
+          title: "今晚的直播主题",
+          url: "https://live.bilibili.com/123",
+          online: "12345",
+          duration: "1h2m",
+          max_online: "99999",
+        },
+        live_hourly: {
+          name: "某位UP主",
+          title: "直播中",
+          url: "https://live.bilibili.com/123",
+          online: "23456",
+          duration: "2h3m",
+          max_online: "99999",
+        },
+        live_end: {
+          name: "某位UP主",
+          title: "直播已结束",
+          url: "https://live.bilibili.com/123",
+          online: "34567",
+          duration: "3h30m",
+          max_online: "99999",
+        },
+      };
+
+      const previewBubble = document.getElementById("preview-bubble");
+      const textareas = Array.from(document.querySelectorAll("textarea[data-template]"));
+      const htmlTextareas = Array.from(document.querySelectorAll("textarea[data-html-template]"));
+      const htmlPreview = document.getElementById("html-preview-frame");
+      const htmlSelect = document.getElementById("html-preview-type");
+
+      const htmlSample = {
+        name: "某位UP主",
+        name_initial: "UP",
+        text: "这是一段用于预览的动态正文",
+        text_html: "这是一段用于预览的动态正文 <img src='https://dummyimage.com/18x18/ffb84d/ffffff' />",
+        title: "直播/视频标题示例",
+        url: "https://www.bilibili.com",
+        online: "12345",
+        duration: "1h20m",
+        max_online: "88888",
+        cover: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='720' height='360'><rect width='100%25' height='100%25' fill='%235bbcff'/><text x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='white' font-size='28'>Preview Cover</text></svg>",
+        cover_display: "block",
+        avatar: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%235bbcff'/><stop offset='100%25' stop-color='%2338c58f'/></linearGradient></defs><rect width='80' height='80' rx='40' fill='url(%23g)'/><text x='50%25' y='52%25' dominant-baseline='middle' text-anchor='middle' fill='white' font-size='28'>UP</text></svg>",
+        avatar_display: "block",
+        avatar_text_display: "none",
+        avatar_badge: "",
+        avatar_badge_display: "none",
+        image_count: "3",
+        media_html: "<div class='media-grid'><img class='media-img' src='https://dummyimage.com/320x200/5bbcff/ffffff'/><img class='media-img' src='https://dummyimage.com/320x200/38c58f/ffffff'/></div>",
+      };
+
+      function applyValues(template, values) {
+        let text = template || "";
+        Object.keys(values).forEach((key) => {
+          text = text.replaceAll(`{${key}}`, values[key] || "");
+        });
+        text = text.replaceAll("[atALL]", "@全体成员 ");
+        return text;
+      }
+
+      function applyHtml(template, values) {
+        let text = template || "";
+        Object.keys(values).forEach((key) => {
+          text = text.replaceAll(`{${key}}`, values[key] || "");
+        });
+        return text;
+      }
+
+      function updatePreview(area) {
+        if (!area) return;
+        const key = area.dataset.template;
+        const values = samples[key] || samples.dynamic;
+        const raw = area.value || "";
+        renderPreview(raw, values);
+      }
+
+      function renderPreview(raw, values) {
+        if (!previewBubble) return;
+        previewBubble.innerHTML = "";
+        if (!raw) {
+          const empty = document.createElement("div");
+          empty.className = "qq-text";
+          empty.textContent = "(模板为空)";
+          previewBubble.appendChild(empty);
+          return;
+        }
+        const parts = raw.split("{SHOTPICTURE}");
+        parts.forEach((part, index) => {
+          const rendered = applyValues(part, values).trim();
+          if (rendered) {
+            const textEl = document.createElement("div");
+            textEl.className = "qq-text";
+            textEl.textContent = rendered;
+            previewBubble.appendChild(textEl);
+          }
+          if (index < parts.length - 1) {
+            const imgEl = document.createElement("div");
+            imgEl.className = "qq-image";
+            imgEl.textContent = "[图片]";
+            previewBubble.appendChild(imgEl);
+          }
+        });
+      }
+
+      textareas.forEach((area) => {
+        area.addEventListener("focus", () => updatePreview(area));
+        area.addEventListener("input", () => updatePreview(area));
+      });
+
+      updatePreview(textareas[0]);
+
+      function updateHtmlPreview() {
+        if (!htmlPreview || !htmlSelect) return;
+        const type = htmlSelect.value || "dynamic";
+        const area = htmlTextareas.find((item) => item.dataset.htmlTemplate === type);
+        if (!area) return;
+        htmlPreview.srcdoc = applyHtml(area.value, htmlSample);
+      }
+
+      htmlTextareas.forEach((area) => {
+        area.addEventListener("input", updateHtmlPreview);
+        area.addEventListener("focus", updateHtmlPreview);
+      });
+      if (htmlSelect) {
+        htmlSelect.addEventListener("change", updateHtmlPreview);
+      }
+      updateHtmlPreview();
+
+      const testType = document.getElementById("test-type");
+      const dynamicHint = document.getElementById("dynamic-hint");
+      const liveHint = document.getElementById("live-hint");
+      const dynamicSelect = document.getElementById("dynamic-id");
+      const dynamicWrap = dynamicSelect ? dynamicSelect.closest("label") : null;
+
+      function updateTestHints() {
+        const type = testType ? testType.value : "dynamic";
+        const isDynamic = type === "dynamic" || type === "video";
+        if (dynamicWrap) {
+          dynamicWrap.style.display = isDynamic ? "" : "none";
+        }
+        if (dynamicHint) {
+          dynamicHint.style.display = isDynamic ? "" : "none";
+        }
+        if (liveHint) {
+          liveHint.style.display = isDynamic ? "none" : "";
+        }
+      }
+
+      if (testType) {
+        testType.addEventListener("change", updateTestHints);
+      }
+      updateTestHints();
+    })();
+  </script>
+{% endblock %}

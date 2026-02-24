@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}日志{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <div class="panel-header">
+      <h2>调试日志</h2>
+      <div class="panel-actions">
+        <form method="get" class="form log-filters">
+          <label class="log-field">
+            <span>等级</span>
+            <select name="level">
+              {% for opt in ["ALL","DEBUG","INFO","WARNING","ERROR"] %}
+                <option value="{{ opt }}" {% if level == opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="log-field">
+            <span>Logger</span>
+            <input name="logger" type="text" value="{{ logger_q }}" list="logger-options" placeholder="bili_api" />
+            <datalist id="logger-options">
+              {% for item in logger_options %}
+                <option value="{{ item }}"></option>
+              {% endfor %}
+            </datalist>
+          </label>
+          {% if current_user.is_admin %}
+            <label class="log-field">
+              <span>UID</span>
+              <select name="uid">
+                <option value="">全部</option>
+                {% for item in uid_options %}
+                  <option value="{{ item }}" {% if uid == item %}selected{% endif %}>{{ item }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          {% endif %}
+          <label class="log-field">
+            <span>关键字</span>
+            <input name="q" type="text" value="{{ keyword }}" placeholder="搜索 message" />
+          </label>
+          <label class="log-field">
+            <span>条数</span>
+            <input name="limit" type="number" min="20" max="500" value="{{ limit }}" />
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn primary">筛选</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <p class="subtext">
+      {% if current_user.is_admin %}
+        管理员可查看全部日志并按 UID 筛选。
+      {% else %}
+        仅显示与你 UID 相关的日志。
+      {% endif %}
+    </p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>日志明细</h2>
+    </div>
+    {% if entries %}
+      <div class="table table-logs">
+        <div class="table-row table-header">
+          <div>时间</div>
+          <div>等级</div>
+          <div>Logger</div>
+          <div>UID</div>
+          <div>内容</div>
+          <div>详情</div>
+        </div>
+        {% for item in entries %}
+          <div class="table-row">
+            <div class="log-time">{{ item.time or "-" }}</div>
+            <div class="log-level level-{{ item.level }}">{{ item.level }}</div>
+            <div class="log-logger">{{ item.logger }}</div>
+            <div class="log-uid">{{ item.uid or "-" }}</div>
+            <div class="log-message">
+              <div>{{ item.message }}</div>
+              {% if item.module or item.line %}
+                <div class="subtext">{{ item.module }}:{{ item.line }}</div>
+              {% endif %}
+            </div>
+            <div>
+              <details class="log-detail">
+                <summary>查看</summary>
+                <pre class="code-block">{{ item | tojson(indent=2) }}</pre>
+              </details>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p>暂无日志。</p>
+    {% endif %}
+  </section>
+{% endblock %}
