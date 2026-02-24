@@ -64,6 +64,7 @@ class BiliBinding(db.Model):
     template_live_start = db.Column(db.Text, default="")
     template_live_hourly = db.Column(db.Text, default="")
     template_live_end = db.Column(db.Text, default="")
+    live_hourly_interval = db.Column(db.Integer, default=0)
     screenshot_template_dynamic = db.Column(db.Text, default="")
     screenshot_template_live = db.Column(db.Text, default="")
 

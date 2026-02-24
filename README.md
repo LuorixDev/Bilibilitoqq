@@ -59,7 +59,7 @@ python app.py
 - `BILIBILI_PROXY`：代理（如 `http://127.0.0.1:7890`）
 - `BILIBILI_SESSDATA` / `BILIBILI_BILI_JCT` / `BILIBILI_BUVID3` / `BILIBILI_BUVID4`：账号字段（可选）
 - `MAX_DYNAMIC_PER_POLL`：单次轮询最多推送多少条动态
-- `LIVE_HOURLY_INTERVAL`：直播播报间隔（秒）
+- `LIVE_HOURLY_INTERVAL`：直播播报间隔默认值（秒，后台可改为分钟）
 - `DYNAMIC_SCREENSHOT_WAIT`：动态截图等待时间（秒）
 - `SCREENSHOT_TEMPLATE_PATH` / `SCREENSHOT_WAIT`：截图模板与等待时间
 
@@ -69,6 +69,7 @@ OneBot 的地址、Token、目标群等均在“绑定管理”里为每个绑�
 - 登录后台：`/login`
 - 管理员在“UP 主管理”中添加 UP 主
 - 在“绑定管理”中配置 OneBot WS 与通知选项
+- 直播播报间隔在“绑定管理”中设置（分钟，最小 30）
 - “消息”页面可测试发送消息并查看回调结果
 - “日志”页面可查看详细调试日志
 

@@ -12,6 +12,10 @@
               <span>全局检测间隔（秒）</span>
               <input name="global_poll_interval" type="number" min="1" value="{{ global_poll_interval }}" />
             </label>
+            <label class="inline">
+              <span>默认直播播报间隔（分钟）</span>
+              <input name="live_hourly_interval" type="number" min="30" value="{{ live_hourly_interval }}" />
+            </label>
             <button type="submit" class="btn ghost">保存</button>
           </form>
           <form method="post" action="{{ url_for('refresh_now') }}">

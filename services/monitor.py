@@ -9,7 +9,6 @@ from datetime import datetime
 from config import (
     DYNAMIC_SCREENSHOT_FULL_PAGE,
     DYNAMIC_SCREENSHOT_WAIT,
-    LIVE_HOURLY_INTERVAL,
     MAX_DYNAMIC_PER_POLL,
     POLL_INTERVAL,
 )
@@ -23,7 +22,7 @@ from services.bili_api import (
 from services.html_screenshot import render_html_to_image
 from services.message_templates import DEFAULT_TEMPLATES
 from services.screenshot_store import get_screenshot_template_value
-from services.settings import get_global_poll_interval
+from services.settings import get_global_poll_interval, get_live_hourly_interval_minutes
 from services.screenshot_templates import DEFAULT_HTML_TEMPLATES, render_html_template
 from services.state import update_status
 from services.time_utils import format_duration
@@ -56,6 +55,33 @@ class BiliMonitor:
         self._live_current_online = {}
         self._live_title = {}
         self._live_url = {}
+
+    def reset_user_state(self, uid: str | int):
+        if uid is None:
+            return
+        uid = str(uid)
+        self._last_dynamic_id.pop(uid, None)
+        self._last_dynamic_text.pop(uid, None)
+        self._last_dynamic_time.pop(uid, None)
+        self._last_dynamic_url.pop(uid, None)
+        self._last_dynamic_title.pop(uid, None)
+        self._last_dynamic_type.pop(uid, None)
+        self._last_dynamic_video_url.pop(uid, None)
+        self._last_dynamic_cover.pop(uid, None)
+        self._last_dynamic_is_video.pop(uid, None)
+        self._user_face.pop(uid, None)
+        self._last_live_status.pop(uid, None)
+        self._live_started_at.pop(uid, None)
+        for key in list(self._live_last_hourly.keys()):
+            if key == uid:
+                self._live_last_hourly.pop(key, None)
+            elif isinstance(key, tuple) and key and str(key[0]) == uid:
+                self._live_last_hourly.pop(key, None)
+        self._live_max_online.pop(uid, None)
+        self._live_current_online.pop(uid, None)
+        self._live_title.pop(uid, None)
+        self._live_url.pop(uid, None)
+        self._next_poll_time.pop(uid, None)
         self._user_face = {}
         self._next_poll_time = {}
 
@@ -79,6 +105,7 @@ class BiliMonitor:
     def _poll_once(self, force: bool = False):
         with self.app.app_context():
             global_interval = get_global_poll_interval()
+            live_hourly_default = max(30, get_live_hourly_interval_minutes())
             now = time.time()
             users = BiliUser.query.filter_by(enabled=True).all()
             users = [
@@ -88,6 +115,7 @@ class BiliMonitor:
                     "name": u.name,
                     "poll_interval": u.poll_interval or 0,
                     "global_poll_interval": global_interval,
+                    "live_hourly_default": live_hourly_default,
                     "credential": {
                         "cookie": u.cookie,
                         "sessdata": u.sessdata,
@@ -118,6 +146,7 @@ class BiliMonitor:
                             "notify_live_start": b.notify_live_start,
                             "notify_live_hourly": b.notify_live_hourly,
                             "notify_live_end": b.notify_live_end,
+                            "live_hourly_interval": b.live_hourly_interval,
                             "enable_screenshot": b.enable_screenshot,
                             "template_dynamic": b.template_dynamic,
                             "template_video": b.template_video,
@@ -294,6 +323,7 @@ class BiliMonitor:
 
     def _handle_live(self, user: dict, name: str):
         uid = user["uid"]
+        bindings = user.get("bindings") or []
         info = fetch_live_info(uid, user.get("credential"))
         if not info:
             return
@@ -330,24 +360,41 @@ class BiliMonitor:
             self._live_current_online[uid] = self._safe_int(online)
 
         last_live = self._last_live_status.get(uid)
+        now = time.time()
         if last_live is None:
             self._last_live_status[uid] = is_live
             if is_live:
-                self._live_started_at[uid] = time.time()
-                self._live_last_hourly[uid] = time.time()
+                self._live_started_at[uid] = now
                 self._live_max_online[uid] = self._safe_int(online)
                 self._live_current_online[uid] = self._safe_int(online)
                 self._live_title[uid] = title
                 self._live_url[uid] = live_url
+                for binding in bindings:
+                    if not self._onebot_enabled(binding):
+                        continue
+                    if not self._notify_live_hourly(binding):
+                        continue
+                    binding_id = binding.get("id")
+                    if binding_id is None:
+                        continue
+                    self._live_last_hourly[(uid, binding_id)] = now
             return
 
         if is_live and not last_live:
-            self._live_started_at[uid] = time.time()
-            self._live_last_hourly[uid] = time.time()
+            self._live_started_at[uid] = now
             self._live_max_online[uid] = self._safe_int(online)
             self._live_current_online[uid] = self._safe_int(online)
             self._live_title[uid] = title
             self._live_url[uid] = live_url
+            for binding in bindings:
+                if not self._onebot_enabled(binding):
+                    continue
+                if not self._notify_live_hourly(binding):
+                    continue
+                binding_id = binding.get("id")
+                if binding_id is None:
+                    continue
+                self._live_last_hourly[(uid, binding_id)] = now
             self._dispatch_live_event(
                 user,
                 name,
@@ -366,31 +413,55 @@ class BiliMonitor:
                     self._live_max_online.get(uid, 0), self._safe_int(online)
                 )
                 self._live_current_online[uid] = self._safe_int(online)
-            last_hourly = self._live_last_hourly.get(uid, 0)
-            now = time.time()
-            if now - last_hourly >= LIVE_HOURLY_INTERVAL:
-                start_ts = self._live_started_at.get(uid)
-                if not start_ts:
-                    api_start = info.get("live_time") or info.get("start_time") or 0
-                    if api_start:
-                        try:
-                            start_ts = float(api_start)
-                        except Exception:
-                            start_ts = None
-                duration = now - start_ts if start_ts else 0
-                max_online = self._live_max_online.get(uid, 0)
-                self._dispatch_live_event(
-                    user,
-                    name,
-                    "live_hourly",
-                    title,
-                    online,
-                    live_url,
-                    duration,
-                    max_online,
-                    cover_url,
-                )
-                self._live_last_hourly[uid] = now
+            for binding in bindings:
+                if not self._onebot_enabled(binding):
+                    continue
+                if not self._notify_live_hourly(binding):
+                    continue
+                binding_id = binding.get("id")
+                if binding_id is None:
+                    continue
+                default_minutes = user.get("live_hourly_default") or 60
+                try:
+                    interval_minutes = int(binding.get("live_hourly_interval") or 0)
+                except Exception:
+                    interval_minutes = 0
+                if interval_minutes <= 0:
+                    try:
+                        interval_minutes = int(default_minutes)
+                    except Exception:
+                        interval_minutes = 60
+                if interval_minutes < 30:
+                    interval_minutes = 30
+                live_interval = interval_minutes * 60
+                key = (uid, binding_id)
+                last_hourly = self._live_last_hourly.get(key)
+                if not last_hourly:
+                    self._live_last_hourly[key] = now
+                    continue
+                if now - last_hourly >= live_interval:
+                    start_ts = self._live_started_at.get(uid)
+                    if not start_ts:
+                        api_start = info.get("live_time") or info.get("start_time") or 0
+                        if api_start:
+                            try:
+                                start_ts = float(api_start)
+                            except Exception:
+                                start_ts = None
+                    duration = now - start_ts if start_ts else 0
+                    max_online = self._live_max_online.get(uid, 0)
+                    self._dispatch_live_event(
+                        {"uid": uid, "bindings": [binding]},
+                        name,
+                        "live_hourly",
+                        title,
+                        online,
+                        live_url,
+                        duration,
+                        max_online,
+                        cover_url,
+                    )
+                    self._live_last_hourly[key] = now
 
         if not is_live and last_live:
             start_ts = self._live_started_at.get(uid)
@@ -408,7 +479,11 @@ class BiliMonitor:
                 cover_url,
             )
             self._live_started_at.pop(uid, None)
-            self._live_last_hourly.pop(uid, None)
+            for key in list(self._live_last_hourly.keys()):
+                if key == uid:
+                    self._live_last_hourly.pop(key, None)
+                elif isinstance(key, tuple) and key and str(key[0]) == str(uid):
+                    self._live_last_hourly.pop(key, None)
             self._live_max_online.pop(uid, None)
             self._live_current_online.pop(uid, None)
             self._live_title.pop(uid, None)

@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from typing import Any
@@ -101,6 +102,56 @@ def _headers() -> dict:
     return headers
 
 
+def _normalize_url(url: str) -> str:
+    if not url:
+        return ""
+    url = str(url).strip()
+    if url.startswith("//"):
+        return "https:" + url
+    return url
+
+
+def _build_cookie_header(data: dict | None) -> str:
+    data = data or {}
+    cookie = data.get("cookie") or ""
+    if cookie:
+        return cookie
+    pairs = []
+    mapping = {
+        "SESSDATA": data.get("sessdata"),
+        "bili_jct": data.get("bili_jct"),
+        "buvid3": data.get("buvid3"),
+        "buvid4": data.get("buvid4"),
+        "DedeUserID": data.get("dedeuserid"),
+        "ac_time_value": data.get("ac_time_value"),
+    }
+    for key, value in mapping.items():
+        if value:
+            pairs.append(f"{key}={value}")
+    return "; ".join(pairs)
+
+
+def _headers_with_credential(data: dict | None) -> dict:
+    headers = _headers()
+    cookie = _build_cookie_header(data)
+    if cookie:
+        headers["Cookie"] = cookie
+    return headers
+
+
+def _fetch_json(url: str, headers: dict) -> dict | None:
+    try:
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            raw = resp.read()
+        data = json.loads(raw.decode("utf-8", errors="ignore"))
+        if isinstance(data, dict):
+            return data
+    except Exception as exc:
+        _LOGGER.warning("Bili API json fetch failed %s err=%s", url, exc)
+    return None
+
+
 def fetch_user_info(uid: str, credential_data: dict | None = None) -> dict | None:
     _init_client()
     try:
@@ -123,6 +174,48 @@ def fetch_live_info(uid: str, credential_data: dict | None = None) -> dict | Non
     except Exception as exc:
         _LOGGER.warning("Bili API live info failed uid=%s err=%s", uid, exc)
         return None
+
+
+def fetch_live_room_info(
+    uid: str, room_id: str | int | None = None, credential_data: dict | None = None
+) -> dict | None:
+    headers = _headers_with_credential(credential_data)
+    urls = []
+    if room_id:
+        urls.append(
+            f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}"
+        )
+    if uid:
+        urls.append(
+            f"https://api.live.bilibili.com/room/v1/Room/getRoomInfoOld?mid={uid}"
+        )
+    for url in urls:
+        data = _fetch_json(url, headers)
+        if not isinstance(data, dict):
+            continue
+        payload = data.get("data") if isinstance(data.get("data"), dict) else data
+        if isinstance(payload, dict) and payload:
+            return payload
+    return None
+
+
+def fetch_live_room_cover(
+    uid: str, room_id: str | int | None = None, credential_data: dict | None = None
+) -> str:
+    info = fetch_live_room_info(uid, room_id=room_id, credential_data=credential_data)
+    if not isinstance(info, dict):
+        return ""
+    for key in (
+        "cover",
+        "user_cover",
+        "keyframe",
+        "live_screen",
+        "cover_from_user",
+    ):
+        cover = info.get(key)
+        if cover:
+            return _normalize_url(str(cover))
+    return ""
 
 
 def fetch_dynamic_list(

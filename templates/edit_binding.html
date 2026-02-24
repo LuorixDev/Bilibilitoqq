@@ -46,6 +46,15 @@
             目标ID
             <input name="onebot_target_id" type="text" value="{{ binding.onebot_target_id }}" placeholder="群号或QQ号" />
           </label>
+          <label>
+            直播播报间隔（分钟）
+            <input
+              name="live_hourly_interval"
+              type="number"
+              min="30"
+              value="{{ binding.live_hourly_interval or live_hourly_interval_default }}"
+            />
+          </label>
         </div>
         <p class="hint">选择 OneBot 配置后会优先使用配置中的 WS/Token，下方字段可留空。</p>
       </div>

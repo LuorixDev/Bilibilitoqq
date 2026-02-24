@@ -40,7 +40,13 @@ from config import (
     TEMPLATES_DATABASE_URL,
 )
 from models import BiliBinding, BiliLogEntry, BiliUser, OneBotProfile, db
-from services.bili_api import download_image, fetch_dynamic_list, fetch_live_info, fetch_user_info
+from services.bili_api import (
+    download_image,
+    fetch_dynamic_list,
+    fetch_live_info,
+    fetch_live_room_cover,
+    fetch_user_info,
+)
 from services.html_screenshot import render_html_to_image
 from services.message_templates import DEFAULT_TEMPLATES, PLACEHOLDER_HINT
 from services.screenshot_templates import (
@@ -56,7 +62,14 @@ from services.screenshot_store import (
     get_screenshot_template_value,
     save_screenshot_templates,
 )
-from services.settings import ensure_global_poll_interval, get_global_poll_interval, set_global_poll_interval
+from services.settings import (
+    ensure_global_poll_interval,
+    ensure_live_hourly_interval,
+    get_global_poll_interval,
+    get_live_hourly_interval_minutes,
+    set_global_poll_interval,
+    set_live_hourly_interval_minutes,
+)
 from services.state import delete_status, get_status, init_state
 from services.time_utils import format_duration
 
@@ -294,6 +307,7 @@ def create_app():
         _seed_bindings()
         _ensure_screenshot_template_records()
         ensure_global_poll_interval()
+        ensure_live_hourly_interval()
         _setup_db_logging(app)
 
     onebot_defaults = {}
@@ -301,6 +315,16 @@ def create_app():
     onebot = OneBotManager(onebot_defaults)
     monitor = BiliMonitor(app, onebot, onebot_defaults)
     app.extensions["bili_monitor"] = monitor
+
+    def _reset_monitor_state(uid: str | int | None):
+        if uid is None:
+            return
+        monitor_obj = app.extensions.get("bili_monitor")
+        if monitor_obj:
+            try:
+                monitor_obj.reset_user_state(uid)
+            except Exception:
+                return
 
     def _start_background():
         onebot.start()
@@ -366,25 +390,40 @@ def create_app():
             "admin.html",
             users=users,
             global_poll_interval=get_global_poll_interval(),
+            live_hourly_interval=get_live_hourly_interval_minutes(),
         )
 
     @app.route("/admin/settings", methods=["POST"])
     @admin_required
     def admin_settings():
-        value = request.form.get("global_poll_interval", "").strip()
-        if not value:
+        poll_value = request.form.get("global_poll_interval", "").strip()
+        live_value = request.form.get("live_hourly_interval", "").strip()
+
+        if not poll_value:
             flash("请输入全局检测间隔（秒）", "error")
             return redirect(url_for("admin"))
+
         try:
-            interval = int(value)
+            poll_interval = int(poll_value)
         except ValueError:
-            flash("检测间隔必须是数字", "error")
+            flash("全局检测间隔必须是数字", "error")
             return redirect(url_for("admin"))
-        if interval <= 0:
-            flash("检测间隔必须大于 0", "error")
+        if poll_interval <= 0:
+            flash("全局检测间隔必须大于 0", "error")
             return redirect(url_for("admin"))
-        set_global_poll_interval(interval)
-        flash("全局检测间隔已更新", "success")
+
+        set_global_poll_interval(poll_interval)
+        if live_value:
+            try:
+                live_minutes = int(live_value)
+            except ValueError:
+                flash("直播播报间隔必须是数字", "error")
+                return redirect(url_for("admin"))
+            if live_minutes <= 0:
+                flash("直播播报间隔必须大于 0", "error")
+                return redirect(url_for("admin"))
+            set_live_hourly_interval_minutes(live_minutes)
+        flash("设置已更新", "success")
         return redirect(url_for("admin"))
 
     @app.route("/admin/add", methods=["POST"])
@@ -446,12 +485,14 @@ def create_app():
     @admin_required
     def admin_delete(user_id):
         user = BiliUser.query.get_or_404(user_id)
+        uid = user.uid
         binding_ids = [binding.id for binding in user.bindings]
         for binding_id in binding_ids:
             delete_screenshot_templates(binding_id)
         delete_status(user.id)
         db.session.delete(user)
         db.session.commit()
+        _reset_monitor_state(uid)
         flash("UP 主已删除", "success")
         return redirect(url_for("admin"))
 
@@ -675,6 +716,7 @@ def create_app():
             placeholder_hint=PLACEHOLDER_HINT,
             html_defaults=DEFAULT_HTML_TEMPLATES,
             html_vars=HTML_TEMPLATE_VARS,
+            live_hourly_interval_default=max(30, get_live_hourly_interval_minutes()),
             submit_label="新增绑定",
             back_url=url_for("admin_bindings", user_id=user.id),
         )
@@ -704,6 +746,7 @@ def create_app():
             html_defaults=DEFAULT_HTML_TEMPLATES,
             html_vars=HTML_TEMPLATE_VARS,
             dynamics=dynamics,
+            live_hourly_interval_default=max(30, get_live_hourly_interval_minutes()),
             back_url=url_for("admin_bindings", user_id=binding.user_id),
         )
 
@@ -712,9 +755,15 @@ def create_app():
     def admin_binding_delete(binding_id):
         binding = BiliBinding.query.get_or_404(binding_id)
         user_id = binding.user_id
+        uid = binding.user.uid if binding.user else None
         delete_screenshot_templates(binding.id)
         db.session.delete(binding)
         db.session.commit()
+        if uid:
+            remaining = BiliBinding.query.filter_by(user_id=user_id).count()
+            if remaining == 0:
+                delete_status(user_id)
+                _reset_monitor_state(uid)
         flash("绑定已删除", "success")
         return redirect(url_for("admin_bindings", user_id=user_id))
 
@@ -754,6 +803,7 @@ def create_app():
             placeholder_hint=PLACEHOLDER_HINT,
             html_defaults=DEFAULT_HTML_TEMPLATES,
             html_vars=HTML_TEMPLATE_VARS,
+            live_hourly_interval_default=max(30, get_live_hourly_interval_minutes()),
             submit_label="新增绑定",
             back_url=url_for("user_bindings"),
         )
@@ -786,6 +836,7 @@ def create_app():
             html_defaults=DEFAULT_HTML_TEMPLATES,
             html_vars=HTML_TEMPLATE_VARS,
             dynamics=dynamics,
+            live_hourly_interval_default=max(30, get_live_hourly_interval_minutes()),
             back_url=url_for("user_bindings"),
         )
 
@@ -796,9 +847,15 @@ def create_app():
         if binding.user_id != current_user.user_id:
             flash("无权限删除该绑定", "error")
             return redirect(url_for("user_bindings"))
+        uid = binding.user.uid if binding.user else None
         delete_screenshot_templates(binding.id)
         db.session.delete(binding)
         db.session.commit()
+        if uid:
+            remaining = BiliBinding.query.filter_by(user_id=binding.user_id).count()
+            if remaining == 0:
+                delete_status(binding.user_id)
+                _reset_monitor_state(uid)
         flash("绑定已删除", "success")
         return redirect(url_for("user_bindings"))
 
@@ -1779,6 +1836,7 @@ def _build_live_test_values(user: BiliUser, info: dict | None) -> tuple[dict, st
     duration = ""
     max_online = ""
     cover_url = ""
+    room_id = ""
     if isinstance(info, dict):
         title = info.get("title") or info.get("roomname") or ""
         online = info.get("online") or info.get("online_num") or ""
@@ -1796,6 +1854,13 @@ def _build_live_test_values(user: BiliUser, info: dict | None) -> tuple[dict, st
             or info.get("cover_from_user")
             or info.get("user_cover")
             or ""
+        )
+
+    if not cover_url:
+        cover_url = fetch_live_room_cover(
+            user.uid,
+            room_id=room_id,
+            credential_data=_build_user_credential_payload(user),
         )
 
     if not title:
@@ -2029,6 +2094,19 @@ def _image_segment(image_bytes: bytes) -> dict:
     return {"type": "image", "data": {"file": f"base64://{image_b64}"}}
 
 
+def _parse_live_hourly_interval(raw: str) -> int:
+    default_minutes = max(30, get_live_hourly_interval_minutes())
+    if not raw:
+        return default_minutes
+    try:
+        value = int(raw)
+    except Exception:
+        return default_minutes
+    if value < 30:
+        return 30
+    return value
+
+
 def _build_binding_from_form(user_id: int) -> BiliBinding:
     name = request.form.get("name", "").strip() or "默认"
     onebot_profile_id = request.form.get("onebot_profile_id", "").strip()
@@ -2036,6 +2114,9 @@ def _build_binding_from_form(user_id: int) -> BiliBinding:
     onebot_access_token = request.form.get("onebot_access_token", "").strip()
     onebot_target_type = request.form.get("onebot_target_type", "group").strip()
     onebot_target_id = request.form.get("onebot_target_id", "").strip()
+    live_hourly_interval = _parse_live_hourly_interval(
+        request.form.get("live_hourly_interval", "").strip()
+    )
 
     enable_onebot = bool(request.form.get("enable_onebot"))
     notify_dynamic = bool(request.form.get("notify_dynamic"))
@@ -2073,6 +2154,7 @@ def _build_binding_from_form(user_id: int) -> BiliBinding:
         notify_live_hourly=notify_live_hourly,
         notify_live_end=notify_live_end,
         enable_screenshot=enable_screenshot,
+        live_hourly_interval=live_hourly_interval,
         template_dynamic=template_dynamic,
         template_video=template_video,
         template_live_start=template_live_start,
@@ -2095,6 +2177,9 @@ def _update_binding_from_form(binding: BiliBinding):
     binding.onebot_access_token = request.form.get("onebot_access_token", "").strip()
     binding.onebot_target_type = request.form.get("onebot_target_type", "group").strip() or "group"
     binding.onebot_target_id = request.form.get("onebot_target_id", "").strip()
+    binding.live_hourly_interval = _parse_live_hourly_interval(
+        request.form.get("live_hourly_interval", "").strip()
+    )
 
     binding.enable_onebot = bool(request.form.get("enable_onebot"))
     binding.notify_dynamic = bool(request.form.get("notify_dynamic"))
@@ -2200,6 +2285,7 @@ def _ensure_binding_columns():
         "notify_live_hourly": "INTEGER",
         "notify_live_end": "INTEGER",
         "enable_screenshot": "INTEGER",
+        "live_hourly_interval": "INTEGER",
         "template_dynamic": "TEXT",
         "template_video": "TEXT",
         "template_live_start": "TEXT",
@@ -2270,6 +2356,17 @@ def _ensure_binding_columns():
             ),
             {"val": DEFAULT_TEMPLATES["live_end"]},
         )
+    default_live_minutes = max(30, get_live_hourly_interval_minutes())
+    db.session.execute(
+        text(
+            "UPDATE bili_bindings SET live_hourly_interval=:val "
+            "WHERE live_hourly_interval IS NULL OR live_hourly_interval=0"
+        ),
+        {"val": default_live_minutes},
+    )
+    db.session.execute(
+        text("UPDATE bili_bindings SET live_hourly_interval=30 WHERE live_hourly_interval < 30")
+    )
     db.session.commit()
 
 
@@ -2306,6 +2403,7 @@ def _seed_bindings():
             notify_live_hourly=True,
             notify_live_end=True,
             enable_screenshot=True,
+            live_hourly_interval=max(30, get_live_hourly_interval_minutes()),
             template_dynamic=DEFAULT_TEMPLATES["dynamic"],
             template_video=DEFAULT_TEMPLATES["video"],
             template_live_start=DEFAULT_TEMPLATES["live_start"],
