@@ -8,10 +8,11 @@ Flask + SQLite 的 B 站动态/直播监控面板，支持 OneBot 11 WS 推送�
 - 动态更新推送（支持截图卡片）
 - 视频更新推送（动态中的视频更新单独提示）
 - 直播开播提醒
-- 直播每小时播报当前信息
+- 直播每小时播报当前信息（支持当前画面关键帧）
 - 直播结束总结（时长、峰值人气）
 - 调试日志页面（支持按等级/UID/关键字筛选）
 - 刷新倒计时与检测间隔（全局默认 + 每个 UP 可单独设置）
+- 动态直播类内容自动过滤，避免与直播通知重复
 
 ## 快速开始
 
@@ -59,7 +60,7 @@ python app.py
 - `BILIBILI_PROXY`：代理（如 `http://127.0.0.1:7890`）
 - `BILIBILI_SESSDATA` / `BILIBILI_BILI_JCT` / `BILIBILI_BUVID3` / `BILIBILI_BUVID4`：账号字段（可选）
 - `MAX_DYNAMIC_PER_POLL`：单次轮询最多推送多少条动态
-- `LIVE_HOURLY_INTERVAL`：直播播报间隔默认值（秒，后台可改为分钟）
+- `LIVE_HOURLY_INTERVAL`：直播播报间隔默认值（秒，后台以“分钟”显示并可修改，最小 30 分钟）
 - `DYNAMIC_SCREENSHOT_WAIT`：动态截图等待时间（秒）
 - `SCREENSHOT_TEMPLATE_PATH` / `SCREENSHOT_WAIT`：截图模板与等待时间
 
@@ -77,6 +78,12 @@ OneBot 的地址、Token、目标群等均在“绑定管理”里为每个绑�
 - 只有模板包含 `{SHOTPICTURE}` 时才会发送截图
 - 默认模板已内置截图占位
 - 可用变量：`{name} {text} {title} {url} {online} {duration} {max_online} {SHOTPICTURE} [atALL]`
+- 直播截图优先使用直播间“当前画面”（keyframe/live_screen）；直播开播使用封面（cover_from_user/user_cover/cover）
+- 直播截图为当前画面时，默认模板会显示红色 `REC` 标识
+
+## 直播画面说明
+- 本项目不解析视频流，不依赖 ffmpeg
+- “当前画面”来自 B 站直播间接口返回的关键帧/封面图 URL
 
 ## OneBot 说明
 本项目作为 WebSocket 客户端主动连接 OneBot 11 服务端，请确保机器人框架已开启 WS 服务并可被访问。

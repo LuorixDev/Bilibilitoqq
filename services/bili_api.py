@@ -212,23 +212,38 @@ def fetch_live_room_info(
     uid: str, room_id: str | int | None = None, credential_data: dict | None = None
 ) -> dict | None:
     headers = _headers_with_credential(credential_data)
-    urls = []
+    primary_payload = None
     if room_id:
-        urls.append(
-            f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}"
-        )
-    if uid:
-        urls.append(
-            f"https://api.live.bilibili.com/room/v1/Room/getRoomInfoOld?mid={uid}"
-        )
-    for url in urls:
+        url = f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}"
         data = _fetch_json(url, headers)
-        if not isinstance(data, dict):
-            continue
-        payload = data.get("data") if isinstance(data.get("data"), dict) else data
-        if isinstance(payload, dict) and payload:
-            return payload
-    return None
+        if isinstance(data, dict):
+            payload = data.get("data") if isinstance(data.get("data"), dict) else data
+            if isinstance(payload, dict) and payload:
+                primary_payload = payload
+                return primary_payload
+
+    if not uid:
+        return primary_payload
+
+    url = f"https://api.live.bilibili.com/room/v1/Room/getRoomInfoOld?mid={uid}"
+    data = _fetch_json(url, headers)
+    if not isinstance(data, dict):
+        return primary_payload
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    if not isinstance(payload, dict) or not payload:
+        return primary_payload
+
+    room_id = payload.get("room_id") or payload.get("roomid")
+    if room_id:
+        url = f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}"
+        data = _fetch_json(url, headers)
+        if isinstance(data, dict):
+            merged = payload.copy()
+            extra = data.get("data") if isinstance(data.get("data"), dict) else data
+            if isinstance(extra, dict):
+                merged.update(extra)
+            return merged
+    return payload
 
 
 def fetch_live_room_cover(
@@ -238,11 +253,11 @@ def fetch_live_room_cover(
     if not isinstance(info, dict):
         return ""
     for key in (
-        "cover",
-        "user_cover",
         "keyframe",
         "live_screen",
+        "cover",
         "cover_from_user",
+        "user_cover",
     ):
         cover = info.get(key)
         if cover:

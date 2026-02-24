@@ -18,6 +18,7 @@ from services.bili_api import (
     download_image,
     fetch_dynamic_list,
     fetch_live_info,
+    fetch_live_room_info,
     fetch_user_info,
 )
 from services.html_screenshot import render_html_to_image
@@ -379,6 +380,15 @@ class BiliMonitor:
             self._cache_last_dynamic(uid, latest_info)
 
     def _dispatch_dynamic(self, user: dict, name: str, info: dict):
+        if self._is_live_dynamic_info(info):
+            self._logger.debug(
+                "skip live dynamic uid=%s id=%s type=%s",
+                user.get("uid"),
+                info.get("id"),
+                info.get("type"),
+                extra={"uid": user.get("uid")},
+            )
+            return
         bindings = user.get("bindings") or []
         is_video = info.get("is_video")
         html_values = self._dynamic_html_values(name, info)
@@ -423,12 +433,42 @@ class BiliMonitor:
         uid = user["uid"]
         bindings = user.get("bindings") or []
         info = self._bapi_call(fetch_live_info, uid, user.get("credential"))
+        live_status = self._extract_live_status(info)
+        room_info = None
+        if (
+            not info
+            or live_status is None
+            or not (isinstance(info, dict) and (info.get("roomid") or info.get("room_id")))
+        ):
+            room_info = self._bapi_call(
+                fetch_live_room_info, uid, credential_data=user.get("credential")
+            )
+            if isinstance(room_info, dict) and room_info:
+                if not isinstance(info, dict):
+                    info = {}
+                for key, value in room_info.items():
+                    if info.get(key) in (None, "", 0):
+                        info[key] = value
+                if room_info.get("keyframe"):
+                    info["keyframe"] = room_info.get("keyframe")
+                if room_info.get("live_screen"):
+                    info["live_screen"] = room_info.get("live_screen")
+                if live_status is None:
+                    live_status = self._extract_live_status(room_info)
+                elif str(live_status) != "1":
+                    fallback_status = self._extract_live_status(room_info)
+                    if str(fallback_status) == "1":
+                        live_status = fallback_status
+            if room_info:
+                self._logger.debug(
+                    "live info fallback uid=%s used=%s",
+                    uid,
+                    bool(room_info),
+                    extra={"uid": uid},
+                )
         if not info:
             return
 
-        live_status = info.get("liveStatus")
-        if live_status is None:
-            live_status = info.get("live_status")
         is_live = str(live_status) == "1"
 
         room_id = info.get("roomid") or info.get("room_id")
@@ -436,13 +476,9 @@ class BiliMonitor:
         online = info.get("online") or info.get("online_num")
         live_url = f"https://live.bilibili.com/{room_id}" if room_id else ""
 
-        cover_url = (
-            info.get("keyframe")
-            or info.get("live_screen")
-            or info.get("cover")
-            or info.get("cover_from_user")
-            or info.get("user_cover")
-            or ""
+        cover_url, cover_source = self._select_live_cover(info, prefer_current=True)
+        cover_url_start, cover_source_start = self._select_live_cover(
+            info, prefer_current=False, allow_current=False, allow_cover=True
         )
 
         self._logger.debug(
@@ -502,7 +538,8 @@ class BiliMonitor:
                 live_url,
                 0,
                 None,
-                cover_url,
+                cover_url_start,
+                cover_source_start,
             )
 
         if is_live and last_live:
@@ -558,6 +595,7 @@ class BiliMonitor:
                         duration,
                         max_online,
                         cover_url,
+                        cover_source,
                     )
                     self._live_last_hourly[key] = now
 
@@ -575,6 +613,7 @@ class BiliMonitor:
                 duration,
                 max_online,
                 cover_url,
+                cover_source,
             )
             self._live_started_at.pop(uid, None)
             for key in list(self._live_last_hourly.keys()):
@@ -604,6 +643,7 @@ class BiliMonitor:
         duration: float | None,
         max_online: int | None,
         cover_url: str,
+        cover_source: str,
     ):
         avatar = self._user_face.get(user.get("uid"), "")
         html_values = self._live_html_values(
@@ -615,6 +655,7 @@ class BiliMonitor:
             max_online,
             cover_url,
             avatar,
+            cover_source,
         )
         for binding in user.get("bindings") or []:
             try:
@@ -756,6 +797,23 @@ class BiliMonitor:
             "title": info.get("video_title") or "",
         }
 
+    @staticmethod
+    def _is_live_dynamic_info(info: dict) -> bool:
+        if not isinstance(info, dict):
+            return False
+        dtype = str(info.get("type") or "").upper()
+        if "LIVE" in dtype:
+            return True
+        extra = info.get("extra") or {}
+        if isinstance(extra, dict):
+            url = str(extra.get("url") or "")
+            if "live.bilibili.com" in url:
+                return True
+        media_html = str(info.get("media_html") or "")
+        if "live.bilibili.com" in media_html:
+            return True
+        return False
+
     def _video_values(self, name: str, info: dict) -> dict:
         return {
             "name": name,
@@ -829,9 +887,13 @@ class BiliMonitor:
         max_online: int | None,
         cover_url: str,
         avatar: str,
+        cover_source: str,
     ) -> dict:
         live_values = self._live_values(name, title, online, live_url, duration, max_online)
         cover = cover_url or ""
+        rec_display = (
+            "block" if cover and cover_source in ("keyframe", "live_screen") else "none"
+        )
         return {
             "name": live_values.get("name"),
             "name_initial": self._name_initial(name),
@@ -843,6 +905,7 @@ class BiliMonitor:
             "max_online": live_values.get("max_online"),
             "cover": cover,
             "cover_display": "block" if cover else "none",
+            "rec_display": rec_display,
             "avatar": avatar or "",
             "avatar_display": "block" if avatar else "none",
             "avatar_text_display": "none" if avatar else "block",
@@ -1122,6 +1185,40 @@ class BiliMonitor:
             return int(value)
         except Exception:
             return 0
+
+    @staticmethod
+    def _extract_live_status(info: dict | None):
+        if not isinstance(info, dict):
+            return None
+        value = info.get("liveStatus")
+        if value is None:
+            value = info.get("live_status")
+        return value
+
+    @staticmethod
+    def _select_live_cover(
+        info: dict | None,
+        prefer_current: bool,
+        allow_current: bool = True,
+        allow_cover: bool = True,
+    ) -> tuple[str, str]:
+        if not isinstance(info, dict):
+            return "", ""
+        if prefer_current:
+            keys = ("keyframe", "live_screen", "cover_from_user", "user_cover", "cover")
+        else:
+            keys = ("cover_from_user", "user_cover", "cover")
+            if allow_current:
+                keys = keys + ("keyframe", "live_screen")
+        if not allow_cover:
+            keys = tuple(
+                key for key in keys if key not in ("cover", "cover_from_user", "user_cover")
+            )
+        for key in keys:
+            value = info.get(key) or ""
+            if value:
+                return BiliMonitor._normalize_url(str(value)), key
+        return "", ""
 
     @staticmethod
     def _get_dynamic_id(item: dict) -> str:

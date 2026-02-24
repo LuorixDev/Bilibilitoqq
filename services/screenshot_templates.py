@@ -156,7 +156,31 @@ DEFAULT_HTML_TEMPLATES = {
       border: 1px solid rgba(90, 140, 190, 0.18);
       backdrop-filter: blur(12px) saturate(140%);
     }
-    .cover { border-radius: 12px; width: 100%; display: {cover_display}; }
+    .cover-wrap { position: relative; width: 100%; display: {cover_display}; }
+    .cover { border-radius: 12px; width: 100%; display: block; }
+    .rec-badge {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      display: {rec_display};
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+    }
+    .rec-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff3b30;
+      box-shadow: 0 0 6px rgba(255, 59, 48, 0.8);
+      flex: 0 0 auto;
+    }
     .live-header { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
     .avatar-wrap {
       position: relative;
@@ -187,7 +211,10 @@ DEFAULT_HTML_TEMPLATES = {
 </head>
 <body>
   <div class=\"card\">
-    <img class=\"cover\" src=\"{cover}\" />
+    <div class=\"cover-wrap\">
+      <img class=\"cover\" src=\"{cover}\" />
+      <div class=\"rec-badge\"><span class=\"rec-dot\"></span><span>REC</span></div>
+    </div>
     <div class=\"title\">{title}</div>
     <div class=\"live-header\">
       <div class=\"avatar-wrap\">
@@ -225,6 +252,7 @@ HTML_TEMPLATE_VARS = [
     "{max_online}",
     "{cover}",
     "{cover_display}",
+    "{rec_display}",
     "{avatar}",
     "{avatar_display}",
     "{avatar_text_display}",

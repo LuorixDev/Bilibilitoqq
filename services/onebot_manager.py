@@ -33,8 +33,6 @@ class OneBotManager:
         key = (
             ws_url,
             resolved.get("access_token") or "",
-            resolved.get("target_type") or "group",
-            str(target_id),
         )
         with self._lock:
             client = self._clients.get(key)
@@ -53,29 +51,49 @@ class OneBotManager:
         resolved = self.resolve_settings(settings)
         client = self._get_client(resolved)
         if client:
-            client.send_text(text)
+            client.send_text(
+                text,
+                target_type=resolved.get("target_type") or "group",
+                target_id=resolved.get("target_id") or "",
+            )
         return None
 
     def send_image_base64(self, settings: dict, image_bytes: bytes, caption: str | None = None):
         resolved = self.resolve_settings(settings)
         client = self._get_client(resolved)
         if client:
-            client.send_image_base64(image_bytes, caption)
+            client.send_image_base64(
+                image_bytes,
+                caption,
+                target_type=resolved.get("target_type") or "group",
+                target_id=resolved.get("target_id") or "",
+            )
         return None
 
     def send_segments(self, settings: dict, segments: list[dict]):
         resolved = self.resolve_settings(settings)
         client = self._get_client(resolved)
         if client:
-            client.send_segments(segments)
+            client.send_segments(
+                segments,
+                target_type=resolved.get("target_type") or "group",
+                target_id=resolved.get("target_id") or "",
+            )
         return None
 
     def send_text_with_result(self, settings: dict, text: str, timeout: int = 5):
         resolved = self.resolve_settings(settings)
+        if not resolved.get("target_id"):
+            return {"ok": False, "error": "missing_target"}
         client = self._get_client(resolved)
         if not client:
             return {"ok": False, "error": "missing_target"}
-        return client.send_text_with_result(text, timeout=timeout)
+        return client.send_text_with_result(
+            text,
+            timeout=timeout,
+            target_type=resolved.get("target_type") or "group",
+            target_id=resolved.get("target_id") or "",
+        )
 
     def send_player_change(
         self,
@@ -97,4 +115,6 @@ class OneBotManager:
                 current_count,
                 max_count,
                 durations,
+                target_type=resolved.get("target_type") or "group",
+                target_id=resolved.get("target_id") or "",
             )

@@ -44,6 +44,7 @@ from services.bili_api import (
     download_image,
     fetch_dynamic_list,
     fetch_live_info,
+    fetch_live_room_info,
     fetch_live_room_cover,
     fetch_user_info,
 )
@@ -1076,7 +1077,7 @@ def create_app():
                 image_bytes = _render_dynamic_test_image(binding, info)
         else:
             live_info = _fetch_live_test_info(binding.user)
-            values, cover_url = _build_live_test_values(binding.user, live_info)
+            values, cover_url = _build_live_test_values(binding.user, live_info, test_type)
             if binding.enable_screenshot and "{SHOTPICTURE}" in template:
                 image_bytes = _render_live_test_image(binding, values, cover_url)
 
@@ -1825,10 +1826,59 @@ def _build_dynamic_test_values(user: BiliUser, info: dict, test_type: str) -> di
 
 
 def _fetch_live_test_info(user: BiliUser) -> dict | None:
-    return fetch_live_info(user.uid, _build_user_credential_payload(user))
+    credential = _build_user_credential_payload(user)
+    info = fetch_live_info(user.uid, credential)
+    live_status = None
+    if isinstance(info, dict):
+        live_status = info.get("liveStatus")
+        if live_status is None:
+            live_status = info.get("live_status")
+    if (
+        not info
+        or live_status is None
+        or not (isinstance(info, dict) and (info.get("roomid") or info.get("room_id")))
+    ):
+        room_info = fetch_live_room_info(user.uid, credential_data=credential)
+        if isinstance(room_info, dict) and room_info:
+            if not isinstance(info, dict):
+                info = {}
+            for key, value in room_info.items():
+                if info.get(key) in (None, "", 0):
+                    info[key] = value
+            if live_status is None:
+                info.setdefault("live_status", room_info.get("live_status"))
+                info.setdefault("liveStatus", room_info.get("liveStatus"))
+            else:
+                fallback_status = room_info.get("live_status")
+                if fallback_status is None:
+                    fallback_status = room_info.get("liveStatus")
+                if str(fallback_status) == "1":
+                    info["live_status"] = fallback_status
+                    info["liveStatus"] = fallback_status
+    return info
 
 
-def _build_live_test_values(user: BiliUser, info: dict | None) -> tuple[dict, str]:
+def _select_live_cover(
+    info: dict | None, prefer_current: bool, allow_current: bool = True
+) -> tuple[str, str]:
+    if not isinstance(info, dict):
+        return "", ""
+    if prefer_current:
+        keys = ("keyframe", "live_screen", "cover_from_user", "user_cover", "cover")
+    else:
+        keys = ("cover_from_user", "user_cover", "cover")
+        if allow_current:
+            keys = keys + ("keyframe", "live_screen")
+    for key in keys:
+        value = info.get(key) or ""
+        if value:
+            return _normalize_url(str(value)), key
+    return "", ""
+
+
+def _build_live_test_values(
+    user: BiliUser, info: dict | None, test_type: str = "live"
+) -> tuple[dict, str]:
     name = user.name or f"UID {user.uid}"
     title = ""
     online = ""
@@ -1836,7 +1886,10 @@ def _build_live_test_values(user: BiliUser, info: dict | None) -> tuple[dict, st
     duration = ""
     max_online = ""
     cover_url = ""
+    cover_source = ""
     room_id = ""
+    prefer_current = test_type in ("live_hourly", "live_end")
+    allow_current = test_type != "live_start"
     if isinstance(info, dict):
         title = info.get("title") or info.get("roomname") or ""
         online = info.get("online") or info.get("online_num") or ""
@@ -1844,19 +1897,15 @@ def _build_live_test_values(user: BiliUser, info: dict | None) -> tuple[dict, st
         if room_id:
             url = f"https://live.bilibili.com/{room_id}"
         start_ts = info.get("live_time") or info.get("start_time") or 0
-        if start_ts:
-            duration = format_duration(time.time() - float(start_ts))
+        start_value = _parse_live_start_ts(start_ts)
+        if start_value:
+            duration = format_duration(time.time() - start_value)
         max_online = online or ""
-        cover_url = (
-            info.get("keyframe")
-            or info.get("live_screen")
-            or info.get("cover")
-            or info.get("cover_from_user")
-            or info.get("user_cover")
-            or ""
+        cover_url, cover_source = _select_live_cover(
+            info, prefer_current=prefer_current, allow_current=allow_current
         )
 
-    if not cover_url:
+    if not cover_url and allow_current:
         cover_url = fetch_live_room_cover(
             user.uid,
             room_id=room_id,
@@ -1875,6 +1924,9 @@ def _build_live_test_values(user: BiliUser, info: dict | None) -> tuple[dict, st
         max_online = online
 
     avatar, _ = _fetch_user_avatar(user)
+    rec_display = (
+        "block" if cover_url and cover_source in ("keyframe", "live_screen") else "none"
+    )
     return (
         {
             "name": name,
@@ -1885,6 +1937,7 @@ def _build_live_test_values(user: BiliUser, info: dict | None) -> tuple[dict, st
             "max_online": max_online,
             "text": "",
             "avatar": avatar,
+            "rec_display": rec_display,
         },
         cover_url,
     )
@@ -1904,6 +1957,31 @@ def _render_dynamic_test_image(binding: BiliBinding, info: dict) -> bytes | None
     cover_url = info.get("cover_url") or ""
     if cover_url:
         return download_image(cover_url)
+    return None
+
+
+def _parse_live_start_ts(value) -> float | None:
+    if not value:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        pass
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = raw[:-1]
+        try:
+            return datetime.fromisoformat(raw).timestamp()
+        except Exception:
+            pass
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(raw, fmt).timestamp()
+            except Exception:
+                continue
     return None
 
 
@@ -1965,6 +2043,7 @@ def _dynamic_html_values(name: str, info: dict) -> dict:
 def _live_html_values(name: str, values: dict, cover_url: str) -> dict:
     cover = cover_url or ""
     avatar = values.get("avatar") or ""
+    rec_display = values.get("rec_display") or "none"
     return {
         "name": values.get("name") or name,
         "name_initial": _name_initial(name),
@@ -1976,6 +2055,7 @@ def _live_html_values(name: str, values: dict, cover_url: str) -> dict:
         "max_online": values.get("max_online") or "",
         "cover": cover,
         "cover_display": "block" if cover else "none",
+        "rec_display": rec_display,
         "avatar": avatar,
         "avatar_display": "block" if avatar else "none",
         "avatar_text_display": "none" if avatar else "block",
