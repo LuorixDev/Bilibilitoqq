@@ -20,9 +20,17 @@ def render_html_to_image(html: str) -> bytes | None:
         template_path = None
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1280, "height": 720})
+        browser = None
+        context = None
+        page = None
         try:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(viewport={"width": 1280, "height": 720})
+            page = context.new_page()
+            # Bound per-operation waits to reduce long-hanging renderer tasks.
+            page.set_default_timeout(15000)
+            page.set_default_navigation_timeout(15000)
+
             if template_path:
                 page.goto(f"file://{template_path}")
             page.set_content(html, wait_until="load")
@@ -81,44 +89,56 @@ def render_html_to_image(html: str) -> bytes | None:
                     "width": box["width"],
                     "height": box["height"],
                 }
-                image = page.screenshot(type="png", clip=clip)
-            else:
-                dims = page.evaluate(
-                    """() => {
-                    const doc = document.documentElement;
-                    const body = document.body;
-                    const width = Math.max(body ? body.scrollWidth : 0, doc.scrollWidth, doc.clientWidth);
-                    const height = Math.max(body ? body.scrollHeight : 0, doc.scrollHeight, doc.clientHeight);
-                    return { width, height };
-                }"""
-                )
-                if isinstance(dims, dict) and dims.get("width") and dims.get("height"):
-                    clip_width = max(1, int(dims["width"]))
-                    clip_height = max(1, int(dims["height"]))
-                    try:
-                        page.set_viewport_size({"width": clip_width, "height": clip_height})
-                    except Exception:
-                        pass
-                    clip = {
-                        "x": 0,
-                        "y": 0,
-                        "width": clip_width,
-                        "height": clip_height,
-                    }
-                    image = page.screenshot(type="png", clip=clip)
-                else:
-                    element = page.locator("html")
-                    box = element.bounding_box()
-                    if box:
-                        clip = {
-                            "x": box["x"],
-                            "y": box["y"],
-                            "width": box["width"],
-                            "height": box["height"],
-                        }
-                        image = page.screenshot(type="png", clip=clip)
-                    else:
-                        image = page.screenshot(type="png", full_page=True)
+                return page.screenshot(type="png", clip=clip)
+
+            dims = page.evaluate(
+                """() => {
+                const doc = document.documentElement;
+                const body = document.body;
+                const width = Math.max(body ? body.scrollWidth : 0, doc.scrollWidth, doc.clientWidth);
+                const height = Math.max(body ? body.scrollHeight : 0, doc.scrollHeight, doc.clientHeight);
+                return { width, height };
+            }"""
+            )
+            if isinstance(dims, dict) and dims.get("width") and dims.get("height"):
+                clip_width = max(1, int(dims["width"]))
+                clip_height = max(1, int(dims["height"]))
+                try:
+                    page.set_viewport_size({"width": clip_width, "height": clip_height})
+                except Exception:
+                    pass
+                clip = {
+                    "x": 0,
+                    "y": 0,
+                    "width": clip_width,
+                    "height": clip_height,
+                }
+                return page.screenshot(type="png", clip=clip)
+
+            element = page.locator("html")
+            box = element.bounding_box()
+            if box:
+                clip = {
+                    "x": box["x"],
+                    "y": box["y"],
+                    "width": box["width"],
+                    "height": box["height"],
+                }
+                return page.screenshot(type="png", clip=clip)
+            return page.screenshot(type="png", full_page=True)
         finally:
-            browser.close()
-        return image
+            if page is not None:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+            if context is not None:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    pass

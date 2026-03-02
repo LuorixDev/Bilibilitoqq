@@ -485,9 +485,22 @@ class BiliMonitor:
         live_url = f"https://live.bilibili.com/{room_id}" if room_id else ""
 
         cover_url, cover_source = self._select_live_cover(info, prefer_current=True)
+        # Live start uses static cover first; avoid showing transient keyframe as "start cover".
         cover_url_start, cover_source_start = self._select_live_cover(
             info, prefer_current=False, allow_current=False, allow_cover=True
         )
+        # Live hourly prefers current frame; fallback to cover when keyframe is unavailable.
+        cover_url_hourly, cover_source_hourly = self._select_live_cover(
+            info, prefer_current=True, allow_current=True, allow_cover=False
+        )
+        if not cover_url_hourly:
+            cover_url_hourly, cover_source_hourly = cover_url, cover_source
+        # Live end prefers room cover style for a stable summary card.
+        cover_url_end, cover_source_end = self._select_live_cover(
+            info, prefer_current=False, allow_current=True, allow_cover=True
+        )
+        if not cover_url_end:
+            cover_url_end, cover_source_end = cover_url, cover_source
 
         self._logger.debug(
             "live status uid=%s live=%s online=%s title=%s",
@@ -602,8 +615,8 @@ class BiliMonitor:
                         live_url,
                         duration,
                         max_online,
-                        cover_url,
-                        cover_source,
+                        cover_url_hourly,
+                        cover_source_hourly,
                     )
                     self._live_last_hourly[key] = now
 
@@ -620,8 +633,8 @@ class BiliMonitor:
                 live_url,
                 duration,
                 max_online,
-                cover_url,
-                cover_source,
+                cover_url_end,
+                cover_source_end,
             )
             self._live_started_at.pop(uid, None)
             for key in list(self._live_last_hourly.keys()):
@@ -655,6 +668,7 @@ class BiliMonitor:
     ):
         avatar = self._user_face.get(user.get("uid"), "")
         html_values = self._live_html_values(
+            event_key,
             name,
             title,
             online,
@@ -887,6 +901,7 @@ class BiliMonitor:
 
     def _live_html_values(
         self,
+        event_key: str,
         name: str,
         title: str,
         online,
@@ -899,9 +914,10 @@ class BiliMonitor:
     ) -> dict:
         live_values = self._live_values(name, title, online, live_url, duration, max_online)
         cover = cover_url or ""
-        rec_display = (
-            "block" if cover and cover_source in ("keyframe", "live_screen") else "none"
-        )
+        # Only live-hourly cards show REC, and only when image source is current live frame.
+        rec_display = "none"
+        if event_key == "live_hourly" and cover and cover_source in ("keyframe", "live_screen"):
+            rec_display = "block"
         return {
             "name": live_values.get("name"),
             "name_initial": self._name_initial(name),
@@ -1360,6 +1376,32 @@ class BiliMonitor:
         extra = self._extract_extra_card(major)
         return images, extra
 
+    def _collect_draw_image_urls(self, draw: dict | None) -> list[str]:
+        if not isinstance(draw, dict):
+            return []
+        images = []
+        items = draw.get("items") or draw.get("pics") or draw.get("pictures") or []
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                url = (
+                    item.get("src")
+                    or item.get("url")
+                    or item.get("img_src")
+                    or item.get("img")
+                )
+                if url:
+                    images.append(self._normalize_url(str(url)))
+        cleaned = []
+        seen = set()
+        for url in images:
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            cleaned.append(url)
+        return cleaned
+
     def _collect_image_urls(self, major: dict) -> list[str]:
         images = []
         draw = major.get("draw")
@@ -1579,12 +1621,14 @@ class BiliMonitor:
             major = {}
 
         parts = []
+        rendered_grid_images = set()
         major_type = str(major.get("type") or "")
 
         if "draw" in major or major_type == "MAJOR_TYPE_DRAW":
-            images = self._collect_image_urls(major)
+            images = self._collect_draw_image_urls(major.get("draw"))
             if images:
                 parts.append(self._render_image_grid(images))
+                rendered_grid_images.update(images)
 
         if "archive" in major or major_type == "MAJOR_TYPE_ARCHIVE":
             archive = major.get("archive") or {}
@@ -1599,6 +1643,7 @@ class BiliMonitor:
             images = self._collect_image_urls({"opus": opus})
             if images:
                 parts.append(self._render_image_grid(images))
+                rendered_grid_images.update(images)
 
         if "live_rcmd" in major or major_type == "MAJOR_TYPE_LIVE":
             live = major.get("live_rcmd") or major.get("live") or {}
@@ -1610,52 +1655,75 @@ class BiliMonitor:
 
         if "common" in major or major_type == "MAJOR_TYPE_COMMON":
             common = major.get("common") or {}
-            parts.append(self._render_common_card(common))
+            parts.append(
+                self._render_common_card(common, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "ugc_season" in major or major_type == "MAJOR_TYPE_UGC_SEASON":
             ugc = major.get("ugc_season") or {}
-            parts.append(self._render_common_card(ugc))
+            parts.append(
+                self._render_common_card(ugc, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "pgc" in major or major_type == "MAJOR_TYPE_PGC":
             pgc = major.get("pgc") or {}
-            parts.append(self._render_common_card(pgc))
+            parts.append(
+                self._render_common_card(pgc, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "music" in major or major_type == "MAJOR_TYPE_MUSIC":
             music = major.get("music") or {}
-            parts.append(self._render_common_card(music))
+            parts.append(
+                self._render_common_card(music, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "medialist" in major or major_type == "MAJOR_TYPE_MEDIALIST":
             medialist = major.get("medialist") or {}
-            parts.append(self._render_common_card(medialist))
+            parts.append(
+                self._render_common_card(medialist, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "courses" in major or major_type == "MAJOR_TYPE_COURSES_SEASON":
             courses = major.get("courses") or major.get("course") or {}
-            parts.append(self._render_common_card(courses))
+            parts.append(
+                self._render_common_card(courses, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "mission" in major or major_type == "MAJOR_TYPE_MISSION":
             mission = major.get("mission") or {}
-            parts.append(self._render_common_card(mission))
+            parts.append(
+                self._render_common_card(mission, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "topic" in major or major_type == "MAJOR_TYPE_TOPIC":
             topic = major.get("topic") or {}
-            parts.append(self._render_common_card(topic))
+            parts.append(
+                self._render_common_card(topic, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "collection" in major or major_type == "MAJOR_TYPE_COLLECTION":
             collection = major.get("collection") or {}
-            parts.append(self._render_common_card(collection))
+            parts.append(
+                self._render_common_card(collection, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "fav" in major or major_type == "MAJOR_TYPE_FAVORITE":
             fav = major.get("fav") or major.get("favorite") or {}
-            parts.append(self._render_common_card(fav))
+            parts.append(
+                self._render_common_card(fav, suppress_cover_urls=rendered_grid_images)
+            )
 
         if "activity" in major or major_type == "MAJOR_TYPE_ACTIVITY":
             activity = major.get("activity") or {}
-            parts.append(self._render_common_card(activity))
+            parts.append(
+                self._render_common_card(activity, suppress_cover_urls=rendered_grid_images)
+            )
 
         if not parts:
             images = self._collect_image_urls(major)
             if images:
                 parts.append(self._render_image_grid(images))
+                rendered_grid_images.update(images)
 
         if not parts:
             generic = self._render_generic_cards(major)
@@ -1847,7 +1915,9 @@ class BiliMonitor:
             meta.append(f"预约：{total}")
         return self._render_card(title, desc, "", reserve.get("jump_url") or "", meta=" ".join(meta))
 
-    def _render_common_card(self, common: dict) -> str:
+    def _render_common_card(
+        self, common: dict, suppress_cover_urls: set[str] | None = None
+    ) -> str:
         if not isinstance(common, dict):
             return ""
         title = common.get("title") or common.get("name") or ""
@@ -1865,17 +1935,27 @@ class BiliMonitor:
             desc,
             self._normalize_url(cover),
             common.get("jump_url") or common.get("url") or "",
+            suppress_cover_urls=suppress_cover_urls,
         )
 
     def _render_card(
-        self, title: str, desc: str, cover: str, url: str, meta: str = "", stats: str = ""
+        self,
+        title: str,
+        desc: str,
+        cover: str,
+        url: str,
+        meta: str = "",
+        stats: str = "",
+        suppress_cover_urls: set[str] | None = None,
     ) -> str:
         title = self._stringify(title)
         desc = self._stringify(desc)
-        cover = self._stringify(cover)
+        cover = self._normalize_url(self._stringify(cover))
         url = self._stringify(url)
         meta = self._stringify(meta)
         stats = self._stringify(stats)
+        if suppress_cover_urls and cover in suppress_cover_urls:
+            cover = ""
         if not any([title, desc, cover, url, meta, stats]):
             return ""
         parts = ['<div class="media-card">']
@@ -2083,7 +2163,9 @@ class BiliMonitor:
             if not text:
                 nodes = desc.get("rich_text_nodes") or []
                 if nodes:
-                    text = "".join(node.get("text") or "" for node in nodes)
+                    text = "".join(
+                        node.get("text") or "" for node in nodes if isinstance(node, dict)
+                    )
         elif isinstance(desc, str):
             text = desc
         elif isinstance(desc, list):
